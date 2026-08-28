@@ -1,5 +1,5 @@
 ---
-title: "Testing Rust-GPU: Unit and End-to-End Tests"
+title: "Testing Rust-GPU: Unit Tests and Compile Test Suite"
 sidebarTitle: "Testing"
 description: "Run Rust-GPU's unit tests with cargo test and end-to-end SPIR-V compilation tests with cargo compiletest. Learn to bless, filter, and target-env tests."
 ---
@@ -70,7 +70,7 @@ cargo compiletest --target-env=vulkan1.1
 You can also provide a comma-separated list to test multiple environments in one invocation:
 
 ```bash
-cargo compiletest --target-env=vulkan1.1,spv1.3
+cargo compiletest --target-env=vulkan1.1,spv.1.3
 ```
 
 ## Adding Tests

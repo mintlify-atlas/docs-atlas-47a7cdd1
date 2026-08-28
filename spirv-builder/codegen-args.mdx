@@ -1,7 +1,7 @@
 ---
-title: "Codegen Args: Debugging and Diagnostic Flags"
+title: "Codegen Args: Rust-GPU Debugging and Diagnostic Flags"
 sidebarTitle: "Codegen Args"
-description: "Internal codegen flags for rust-gpu via RUSTGPU_CODEGEN_ARGS: dump IR passes, disable validation, control SPIR-T, and diagnose shader compilation issues."
+description: "Internal flags for rust-gpu via RUSTGPU_CODEGEN_ARGS: dump IR passes, disable validation, control SPIR-T, and diagnose shader compilation issues."
 ---
 
 Codegen args are internal debugging and diagnostic flags passed directly to the `rustc_codegen_spirv` compiler backend. They are intended primarily for Rust-GPU developers and advanced users diagnosing shader compilation problems — not for production use. These flags can dump intermediate IR representations, disable validation and optimization passes, enable experimental SPIR-T passes, and print detailed diagnostic information about specialization and zombie removal.

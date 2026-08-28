@@ -1,7 +1,7 @@
 ---
-title: "Writing Shader Crates with Rust-GPU"
+title: "How to Set Up a Rust-GPU Shader Crate from Scratch"
 sidebarTitle: "Shader Crates"
-description: "Configure a Rust crate as a GPU shader, declare entry points with #[spirv(...)], add spirv-std, and integrate with spirv-builder for automatic compilation."
+description: "Configure a Rust crate as a GPU shader using dylib, declare entry points with #[spirv(...)], add spirv-std, and compile with spirv-builder."
 ---
 
 Rust-GPU compiles ordinary Rust crates into SPIR-V shader modules, but shader crates have a few special requirements compared to normal Rust libraries: they must be `no_std`, declare a `dylib` crate type so the linker produces a `.spv` binary, and annotate shader entry points with `#[spirv(...)]` attributes from `spirv-std`. This page walks through every step, from the initial `Cargo.toml` to loading the compiled SPIR-V binary in your host application.

@@ -1,5 +1,5 @@
 ---
-title: "Get Started with Rust-GPU Shader Development"
+title: "Rust-GPU Quickstart: Write and Compile Your First Shader"
 sidebarTitle: "Quickstart"
 description: "Set up spirv-builder in a Cargo build script, write a fragment shader in Rust, compile it to SPIR-V, and load it in your application in four steps."
 ---
@@ -213,8 +213,8 @@ rustflags = [
 ]
 
 [unstable]
-build-std = ["core"]
-build-std-features = ["compiler-builtins-mem"]
+build-std=["core"]
+build-std-features=["compiler-builtins-mem"]
 ```
 
 Then build your shader crate with:

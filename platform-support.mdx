@@ -1,5 +1,5 @@
 ---
-title: "Platform and Target Support for Rust-GPU"
+title: "Rust-GPU Platform Support: OS, GPU APIs, and SPIR-V Targets"
 sidebarTitle: "Platform Support"
 description: "Supported operating systems, graphics APIs, SPIR-V targets, Vulkan versions, and GPU drivers for Rust-GPU shader compilation and execution."
 ---
@@ -86,6 +86,13 @@ spirv-unknown-opengl4.5
 ```
 
 ### OpenCL
+
+<Warning>
+  OpenCL target triples are present in the codebase but are **not supported** by
+  `SpirvBuilder` or `rustc_codegen_spirv`. Passing any `spirv-unknown-opencl*`
+  target to `SpirvBuilder::new` will return an error at build time. These
+  entries are listed here for reference only.
+</Warning>
 
 ```text
 spirv-unknown-opencl1.2

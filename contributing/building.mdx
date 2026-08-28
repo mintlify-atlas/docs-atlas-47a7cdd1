@@ -1,5 +1,5 @@
 ---
-title: "Building Rust-GPU from Source"
+title: "Building Rust-GPU from Source: Setup and Run Examples"
 sidebarTitle: "Building"
 description: "Clone, build, and run Rust-GPU from source. Set up SPIRV-Tools, run example shaders with the wgpu or Vulkan runners, and configure Linux prerequisites."
 ---
@@ -33,7 +33,7 @@ The `--recurse-submodules` flag is required. Rust-GPU depends on submodules for 
 <Steps>
   <Step title="Clone the repository">
     ```bash
-    git clone --recurse-submodules https://github.com/EmbarkStudios/rust-gpu
+    git clone --recurse-submodules https://github.com/Rust-GPU/rust-gpu
     cd rust-gpu
     ```
   </Step>
@@ -90,7 +90,7 @@ Using `--features use-installed-tools --no-default-features` can meaningfully sp
 
 ```bash
 cargo run \
-    --manifest-path examples/example-runner/Cargo.toml \
+    --manifest-path examples/runners/wgpu/Cargo.toml \
     --features use-installed-tools \
     --no-default-features
 ```

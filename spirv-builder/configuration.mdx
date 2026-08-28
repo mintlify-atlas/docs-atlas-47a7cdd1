@@ -1,7 +1,7 @@
 ---
-title: "SpirvBuilder Configuration Reference"
+title: "SpirvBuilder Configuration: Methods and API Reference"
 sidebarTitle: "Configuration"
-description: "All SpirvBuilder methods: metadata output, capabilities, extensions, multimodule, debug info, panic strategy, relax options, and SPIR-V validation controls."
+description: "Complete SpirvBuilder API reference: metadata, capabilities, extensions, multimodule, panic strategy, relaxation options, and SPIR-V validation flags."
 ---
 
 `SpirvBuilder` uses a builder pattern: every configuration method takes `self` by value, applies the setting, and returns `Self`, allowing you to chain multiple calls before invoking `.build()`. All fields have sensible defaults (release mode on, full metadata printout, no extra capabilities, silent panic exit), so a minimal build script only needs a path and a target triple.
@@ -57,6 +57,37 @@ Consumes the builder and invokes the full shader compilation pipeline. This meth
 4. Optionally prints `cargo:rustc-env` and `cargo:rerun-if-changed` lines.
 
 Returns `Ok(CompileResult)` on success, or a `SpirvBuilderError` on failure. When `print_metadata` is `MetadataPrintout::Full`, the compiled `.spv` path is also emitted as a `cargo:rustc-env` variable and you generally do not need to inspect the `CompileResult` directly.
+
+### `.watch(on_compilation_finishes)`
+
+```rust
+#[cfg(feature = "watch")]
+pub fn watch(
+    mut self,
+    mut on_compilation_finishes: impl FnMut(CompileResult) + Send + 'static,
+) -> Result<CompileResult, SpirvBuilderError>
+```
+
+Watches the shader crate for filesystem changes using the [`notify`](https://crates.io/crates/notify) crate and automatically rebuilds on modifications. Requires enabling the `watch` Cargo feature on `spirv-builder`.
+
+Returns the `CompileResult` of the **first** successful compilation. All subsequent compilations invoke `on_compilation_finishes` with their result in a background thread.
+
+<Note>
+  `.watch()` requires `print_metadata` to be set to `MetadataPrintout::None`. Using any other value will return `SpirvBuilderError::WatchWithPrintMetadata`. This method is intended for interactive hot-reload tools, not standard `build.rs` scripts.
+</Note>
+
+```rust
+use spirv_builder::{MetadataPrintout, SpirvBuilder};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    SpirvBuilder::new("path/to/shader", "spirv-unknown-vulkan1.1")
+        .print_metadata(MetadataPrintout::None)
+        .watch(|result| {
+            println!("Shader recompiled: {:?}", result);
+        })?;
+    Ok(())
+}
+```
 
 ---
 

@@ -1,5 +1,5 @@
 ---
-title: "spirv-builder: Automate Rust Shader Compilation"
+title: "spirv-builder: Compile Rust Shaders to SPIR-V Automatically"
 sidebarTitle: "Overview"
 description: "spirv-builder is a Cargo build-script helper that drives rustc_codegen_spirv to compile Rust shader crates to SPIR-V binaries automatically."
 ---
@@ -42,13 +42,11 @@ There is also an optional `watch` feature for hot-reload support — see [Watch 
 
   ```toml
   # Compile build-dependencies in release mode with the same settings
-  # as regular dependencies.
+  # as regular dependencies (including incremental compilation).
   [profile.release.build-override]
   opt-level = 3
-  codegen-units = 16
-
-  [profile.dev.build-override]
-  opt-level = 3
+  incremental = true
+  codegen-units = 256
   ```
 
   This optimization applies to _all_ build script dependencies, which may slightly increase clean-build times but dramatically reduces shader compilation time during development. See [rust-gpu issue #448](https://github.com/EmbarkStudios/rust-gpu/issues/448) for important caveats.
@@ -104,7 +102,7 @@ spirv-builder = { version = "0.9", features = ["use-compiled-tools", "watch"] }
 ```
 
 <Note>
-  The `watch` feature is incompatible with `MetadataPrintout::Full` — using both will return a `SpirvBuilderError::WatchWithPrintMetadata` error. Watch mode is intended for interactive development tools, not standard build scripts.
+  The `watch` feature requires `print_metadata` to be set to `MetadataPrintout::None`. Using any other value (`Full` or `DependencyOnly`) will return a `SpirvBuilderError::WatchWithPrintMetadata` error. Watch mode is intended for interactive development tools, not standard build scripts.
 </Note>
 
 ---

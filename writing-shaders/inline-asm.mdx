@@ -1,7 +1,7 @@
 ---
-title: "Inline SPIR-V Assembly in Rust-GPU Shaders"
+title: "Writing Inline SPIR-V Assembly in Rust-GPU Shaders"
 sidebarTitle: "Inline Assembly"
-description: "Write raw SPIR-V instructions inside Rust shaders using the asm! macro. Covers ID syntax, type inference, and practical examples."
+description: "Write raw SPIR-V instructions inside Rust shaders using the asm! macro, covering ID syntax, type inference operators, and practical examples."
 ---
 
 Rust-GPU supports writing raw SPIR-V instructions directly inside shader code using Rust's `asm!` macro. This gives you access to the full breadth of the SPIR-V instruction set — including instructions that are not yet wrapped by higher-level `spirv-std` APIs. The inline assembly feature is nightly-only and requires enabling the `asm_experimental_arch` feature in your shader crate.
@@ -82,7 +82,7 @@ Although generic types are not directly accepted, you can pass a **pointer to a 
 
 ## Practical Example
 
-The following function is a generic implementation of `OpVectorExtractDynamic` that works for any scalar type `T` and any vector type `V`. This exact function is also available as `spirv_std::arch::vector_extract_dynamic`.
+The following function is a generic implementation of `OpVectorExtractDynamic` that works for any scalar type `T` and any vector type with `N` components. This exact function is also available as `spirv_std::arch::vector_extract_dynamic`.
 
 ```rust
 use spirv_std::scalar::Scalar;
@@ -91,9 +91,9 @@ use spirv_std::vector::Vector;
 /// Dynamically extract a scalar component from a vector at a runtime index.
 ///
 /// # Safety
-/// The `index` must be within bounds for the vector type `V`.
-pub unsafe fn vector_extract_dynamic<T: Scalar, V: Vector<T>>(
-    vector: V,
+/// The `index` must be within bounds for the vector type.
+pub unsafe fn vector_extract_dynamic<T: Scalar, const N: usize>(
+    vector: impl Vector<T, N>,
     index: usize,
 ) -> T {
     let mut result = T::default();

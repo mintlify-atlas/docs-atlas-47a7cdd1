@@ -1,7 +1,7 @@
 ---
-title: "GPU Image Types in Rust-GPU Shaders"
+title: "Declaring GPU Image Types and Samplers in Rust-GPU"
 sidebarTitle: "Images"
-description: "Use the Image! macro and spirv_std::image types to declare sampled images, storage images, and samplers in Rust-GPU shaders."
+description: "Use the Image! macro and spirv_std::image type aliases to declare sampled images, storage images, and samplers in Rust-GPU shader crates."
 ---
 
 SPIR-V has a rich and highly parameterized image type system. Every image in a SPIR-V module carries information about its dimensionality, sample type, whether it is sampled through a sampler or accessed directly as a storage image, whether it is arrayed, and more. `spirv-std` represents this system in Rust through the generic `Image<...>` struct, but specifying all of its type parameters by hand would be extremely verbose. In practice you should use either the `Image!` macro for custom image types or the predefined type aliases for common formats.

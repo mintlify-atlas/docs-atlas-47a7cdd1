@@ -1,7 +1,7 @@
 ---
-title: "Ray Tracing Shaders with Rust-GPU"
+title: "Ray Tracing Pipeline Shaders with Rust-GPU and SPIR-V"
 sidebarTitle: "Ray Tracing"
-description: "Use AccelerationStructure, ray generation, closest hit, and miss shader entry points in Rust-GPU for Vulkan ray tracing pipelines."
+description: "Use AccelerationStructure, RayQuery, ray generation, closest hit, and miss shader stages in Rust-GPU for Vulkan ray tracing pipelines."
 ---
 
 Rust-GPU provides first-class support for hardware ray tracing via `spirv_std::ray_tracing`. The module exposes `AccelerationStructure`, `RayQuery`, `RayFlags`, and other types that map directly to their Vulkan and SPIR-V counterparts. Entry-point attributes for all five ray tracing shader stages — ray generation, closest hit, any hit, intersection, and miss — are available through the standard `#[spirv(...)]` mechanism. Ray tracing also supports an inline `RayQuery` path for ray-tracing from within rasterization and compute shaders.
