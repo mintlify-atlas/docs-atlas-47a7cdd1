@@ -1,0 +1,86 @@
+---
+title: "Rust-GPU: Rust as a First-Class GPU Shading Language"
+sidebarTitle: "Introduction"
+description: "Rust-GPU compiles Rust to SPIR-V shaders for Vulkan, wgpu, and WebGPU. Learn about its architecture, core crates, and project status."
+---
+
+Rust-GPU is a project that enables writing GPU graphics and compute shaders in Rust by compiling them to [SPIR-V](https://www.khronos.org/spir/), the intermediate representation consumed by Vulkan, wgpu, WebGPU, and other modern graphics APIs. Historically, GPU programming in games and graphics applications has relied on domain-specific shading languages like HLSL and GLSL. While functional, these languages have failed to keep pace with the rest of the software industry: they lack robust module and package systems, offer limited safety guarantees, and make it difficult to share code between CPU and GPU. Rust-GPU addresses this by bringing Rust — a low-level, safe, high-performance systems language with a first-class package ecosystem — to the GPU through a custom `rustc` codegen backend (`rustc_codegen_spirv`) that emits valid SPIR-V directly from Rust source code.
+
+## Architecture
+
+Rust-GPU is composed of three main crates:
+
+**`rustc_codegen_spirv`** is the internal compiler backend. It hooks into the Rust compiler as a custom codegen backend and translates Rust MIR (Mid-level Intermediate Representation) into SPIR-V binary modules. You do not interact with this crate directly in most workflows — it is invoked automatically by the build tooling.
+
+**`spirv-std`** is the shader standard library. It is a `no_std` crate that provides everything a Rust shader needs: the `#[spirv(...)]` attribute macro for annotating entry points and built-in inputs/outputs, math primitives via [`glam`](https://crates.io/crates/glam) integration, and APIs for accessing GPU resources such as textures and buffers. Every shader crate you write will depend on `spirv-std`.
+
+**`spirv-builder`** is a build-script helper crate intended to be used as a `[build-dependencies]` entry in your application's `Cargo.toml`. It wraps the invocation of `rustc_codegen_spirv` with a convenient Rust API, automatically outputs Cargo `rerun-if-changed` metadata, and surfaces the compiled `.spv` file path through an environment variable so you can load it with `include_bytes!` at compile time.
+
+```text
+Your Application Crate
+  ├── build.rs  (uses spirv-builder)
+  │     └── invokes rustc_codegen_spirv
+  └── src/      (loads .spv via include_bytes!)
+
+Your Shader Crate
+  └── src/lib.rs  (uses spirv-std)
+```
+
+<Note>
+  Rust-GPU is in an **early stage of development**. No backwards compatibility
+  guarantees are made at this time, and there is no formal deprecation model.
+  The project currently only supports building from source against the latest
+  `main` branch. APIs and user-facing code are expected to evolve. Early
+  adopters are encouraged to update their code alongside the project.
+</Note>
+
+## Project Status
+
+Rust-GPU began as an internal Embark Studios project and has since moved to community ownership under the [Rust-GPU GitHub organization](https://github.com/Rust-GPU/rust-gpu). Active development continues there. The codebase is published to [crates.io](https://crates.io) (current version: `0.9`), but because the project is still maturing, only the latest `main` branch is considered fully supported.
+
+If you encounter something that is not working or unclear, please [file an issue](https://github.com/EmbarkStudios/rust-gpu/issues) on the repository.
+
+## Supported Targets
+
+Rust-GPU can compile shaders targeting a range of SPIR-V environments:
+
+- **Vulkan** 1.0, 1.1, 1.1 with SPIR-V 1.4, and 1.2
+- **wgpu** (via a translation layer to Metal / DirectX 12)
+- **WebGPU** (`spirv-unknown-webgpu0`)
+- **Raw SPIR-V** 1.0 through 1.5
+- **OpenCL** 1.2 through 2.2 (including embedded profiles)
+- **OpenGL** 4.0 through 4.5 (tertiary support)
+
+For a complete list of target triples and their support tier, see the [Platform Support](/platform-support) page.
+
+## License
+
+Rust-GPU is dual-licensed under either:
+
+- [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0)
+- [MIT License](http://opensource.org/licenses/MIT)
+
+at your option.
+
+---
+
+## Explore the Documentation
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Set up spirv-builder, write your first fragment shader, and compile it to
+    SPIR-V in four steps.
+  </Card>
+  <Card title="Writing Shader Crates" icon="code" href="/writing-shaders/shader-crates">
+    Learn how to structure a Rust shader crate with spirv-std, entry-point
+    attributes, and built-in variables.
+  </Card>
+  <Card title="spirv-builder Reference" icon="book" href="/spirv-builder/overview">
+    Full API reference for SpirvBuilder, MetadataPrintout, ShaderPanicStrategy,
+    and all configuration options.
+  </Card>
+  <Card title="Platform Support" icon="display" href="/platform-support">
+    Supported operating systems, graphics APIs, SPIR-V target triples, and GPU
+    driver requirements.
+  </Card>
+</CardGroup>

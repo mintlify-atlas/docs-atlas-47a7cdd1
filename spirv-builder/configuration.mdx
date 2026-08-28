@@ -1,0 +1,386 @@
+---
+title: "SpirvBuilder Configuration Reference"
+sidebarTitle: "Configuration"
+description: "All SpirvBuilder methods: metadata output, capabilities, extensions, multimodule, debug info, panic strategy, relax options, and SPIR-V validation controls."
+---
+
+`SpirvBuilder` uses a builder pattern: every configuration method takes `self` by value, applies the setting, and returns `Self`, allowing you to chain multiple calls before invoking `.build()`. All fields have sensible defaults (release mode on, full metadata printout, no extra capabilities, silent panic exit), so a minimal build script only needs a path and a target triple.
+
+This page documents every public method extracted from the `spirv-builder` source. For a getting-started walkthrough and installation instructions, see the [Overview](./overview) page.
+
+## Constructor
+
+### `SpirvBuilder::new`
+
+```rust
+pub fn new(path_to_crate: impl AsRef<Path>, target: impl Into<String>) -> Self
+```
+
+Creates a new `SpirvBuilder` with default settings. All other methods modify these defaults and return `Self`.
+
+<ParamField path="path_to_crate" type="impl AsRef<Path>" required>
+  Path to the shader crate directory, relative to your `build.rs`. Must point to an existing directory containing a `Cargo.toml`. If the path does not exist at build time, `build()` returns `SpirvBuilderError::CratePathDoesntExist`.
+</ParamField>
+
+<ParamField path="target" type="impl Into<String>" required>
+  SPIR-V target triple string. Common values include `"spirv-unknown-vulkan1.1"`, `"spirv-unknown-vulkan1.2"`, and `"spirv-unknown-spv1.3"`. See the platform support page for the full list of available targets.
+</ParamField>
+
+**Defaults set by the constructor:**
+
+| Field | Default |
+|---|---|
+| `print_metadata` | `MetadataPrintout::Full` |
+| `release` | `true` |
+| `deny_warnings` | `false` |
+| `multimodule` | `false` |
+| `spirv_metadata` | `SpirvMetadata::None` |
+| `shader_panic_strategy` | `ShaderPanicStrategy::SilentExit` |
+| All relaxation flags | `false` |
+| `preserve_bindings` | `false` |
+
+---
+
+## Build Execution
+
+### `.build()`
+
+```rust
+pub fn build(mut self) -> Result<CompileResult, SpirvBuilderError>
+```
+
+Consumes the builder and invokes the full shader compilation pipeline. This method:
+
+1. Validates preconditions (crate path exists, no incompatible option combinations).
+2. Invokes a nested `cargo build` with the SPIR-V backend via `rustc_codegen_spirv`.
+3. Parses the resulting metadata JSON.
+4. Optionally prints `cargo:rustc-env` and `cargo:rerun-if-changed` lines.
+
+Returns `Ok(CompileResult)` on success, or a `SpirvBuilderError` on failure. When `print_metadata` is `MetadataPrintout::Full`, the compiled `.spv` path is also emitted as a `cargo:rustc-env` variable and you generally do not need to inspect the `CompileResult` directly.
+
+---
+
+## Metadata & Output
+
+### `.print_metadata(v: MetadataPrintout)`
+
+```rust
+pub fn print_metadata(mut self, v: MetadataPrintout) -> Self
+```
+
+Controls what Cargo metadata `build.rs` emits. Defaults to `MetadataPrintout::Full`.
+
+The `MetadataPrintout` enum has three variants:
+
+```rust
+pub enum MetadataPrintout {
+    /// Print no cargo metadata at all.
+    None,
+    /// Print only dependency tracking metadata (cargo:rerun-if-changed).
+    /// Useful for multi-module builds where the env-var approach doesn't apply.
+    DependencyOnly,
+    /// Print all cargo metadata: dependency info plus the spirv env var.
+    /// Required for the `include_bytes!(env!("my_shader.spv"))` pattern.
+    Full,
+}
+```
+
+<Note>
+  `MetadataPrintout::Full` is incompatible with `multimodule(true)`. Using both will cause `build()` to return `SpirvBuilderError::MultiModuleWithPrintMetadata`. For multi-module builds, use `MetadataPrintout::DependencyOnly` and retrieve paths from the `CompileResult` directly.
+</Note>
+
+### `.spirv_metadata(v: SpirvMetadata)`
+
+```rust
+pub fn spirv_metadata(mut self, v: SpirvMetadata) -> Self
+```
+
+Sets the level of debug metadata (primarily `OpName` and `OpLine` instructions) included in the compiled SPIR-V binary. More metadata significantly increases binary size. Defaults to `SpirvMetadata::None`.
+
+```rust
+pub enum SpirvMetadata {
+    /// Strip all names and debug information from the SPIR-V output.
+    /// Smallest binary size. Default.
+    None,
+    /// Include OpNames only for public interface variables (uniforms, push constants,
+    /// storage buffers, etc.) to support shader reflection.
+    NameVariables,
+    /// Include OpNames for all variables and functions, plus OpLine instructions
+    /// for source-level debugging. Significantly increases binary size.
+    Full,
+}
+```
+
+### `.multimodule(v: bool)`
+
+```rust
+pub fn multimodule(mut self, v: bool) -> Self
+```
+
+When `true`, each entry point in the shader crate is compiled into a separate `.spv` file, rather than bundling all entry points into a single module. Defaults to `false`.
+
+This is useful when downstream tooling has bugs handling multiple entry points per SPIR-V module. Note that `multimodule(true)` requires `print_metadata` to be set to something other than `MetadataPrintout::Full`; use `MetadataPrintout::DependencyOnly` and read paths from the returned `CompileResult` instead.
+
+---
+
+## Capabilities & Extensions
+
+### `.capability(capability: Capability)`
+
+```rust
+pub fn capability(mut self, capability: Capability) -> Self
+```
+
+Adds a SPIR-V capability to the compiled module. The `Capability` type is re-exported from `rustc_codegen_spirv_types` and mirrors the [SPIR-V capability enumeration](https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html#_capability).
+
+Within shader code, you can query whether a capability is enabled using `#[cfg(target_feature = "TheCapability")]`.
+
+Call `.capability()` multiple times to add multiple capabilities:
+
+```rust
+use spirv_builder::{Capability, MetadataPrintout, SpirvBuilder};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    SpirvBuilder::new("path/to/shader", "spirv-unknown-vulkan1.1")
+        .print_metadata(MetadataPrintout::Full)
+        .capability(Capability::Float64)
+        .capability(Capability::Int64)
+        .build()?;
+    Ok(())
+}
+```
+
+### `.extension(extension: impl Into<String>)`
+
+```rust
+pub fn extension(mut self, extension: impl Into<String>) -> Self
+```
+
+Adds a SPIR-V extension string to the module (e.g. `"SPV_KHR_ray_tracing"`). Within shader code, you can query whether an extension is enabled using `#[cfg(target_feature = "ext:the_extension")]`.
+
+```rust
+SpirvBuilder::new("path/to/shader", "spirv-unknown-vulkan1.1")
+    .extension("SPV_KHR_ray_tracing")
+    .build()?;
+```
+
+---
+
+## Panic Handling
+
+### `.shader_panic_strategy(strategy: ShaderPanicStrategy)`
+
+```rust
+pub fn shader_panic_strategy(mut self, shader_panic_strategy: ShaderPanicStrategy) -> Self
+```
+
+Controls what happens when Rust `panic!` is reached inside a shader at runtime. Defaults to `ShaderPanicStrategy::SilentExit`.
+
+```rust
+pub enum ShaderPanicStrategy {
+    /// Return from the shader entry-point with no side effects (default).
+    ///
+    /// Unlike OpTerminateInvocation, this works in all shader stages, not just
+    /// fragment shaders. It is implemented via control-flow rewriting.
+    SilentExit,
+
+    /// Like SilentExit, but uses debugPrintf to report the panic location before
+    /// returning. Automatically requires SPV_KHR_non_semantic_info.
+    DebugPrintfThenExit {
+        /// Also print entry-point input values to identify the panicking invocation.
+        print_inputs: bool,
+        /// Also print a static call-chain backtrace. May significantly increase binary size.
+        print_backtrace: bool,
+    },
+
+    /// Uses OpUnreachable — forces all panics to become Undefined Behavior.
+    UNSOUND_DO_NOT_USE_UndefinedBehaviorViaUnreachable,
+}
+```
+
+<Warning>
+  **`UNSOUND_DO_NOT_USE_UndefinedBehaviorViaUnreachable` is unsound.** It adds Undefined Behavior to safe Rust code and exists solely for performance testing purposes. It must never be used in production shaders. Its name is intentionally unfriendly as a deterrent.
+</Warning>
+
+#### Using `DebugPrintfThenExit`
+
+```rust
+use spirv_builder::{MetadataPrintout, ShaderPanicStrategy, SpirvBuilder};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    SpirvBuilder::new("path/to/shader", "spirv-unknown-vulkan1.1")
+        .print_metadata(MetadataPrintout::Full)
+        .shader_panic_strategy(ShaderPanicStrategy::DebugPrintfThenExit {
+            print_inputs: true,
+            print_backtrace: true,
+        })
+        .build()?;
+    Ok(())
+}
+```
+
+To capture `debugPrintf` output at runtime, you need:
+- Vulkan Validation Layers enabled (e.g. `VK_LOADER_LAYERS_ENABLE=VK_LAYER_KHRONOS_validation`)
+- `VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT`
+- `DEBUG_PRINTF_TO_STDOUT=1` for simple stdout output
+- For wgpu: `wgpu::Features::SPIRV_SHADER_PASSTHROUGH` (Naga does not support `debugPrintf`)
+
+---
+
+## Build Controls
+
+### `.release(v: bool)`
+
+```rust
+pub fn release(mut self, v: bool) -> Self
+```
+
+Whether to compile the shader crate in release mode (i.e. `--profile release`). Defaults to `true`. Set to `false` to compile in dev mode (faster rebuild, no optimizations).
+
+### `.deny_warnings(v: bool)`
+
+```rust
+pub fn deny_warnings(mut self, v: bool) -> Self
+```
+
+When `true`, passes `-Dwarnings` to the shader crate compilation, treating any compiler warnings as hard errors. Defaults to `false`.
+
+### `.extra_arg(arg: impl Into<String>)`
+
+```rust
+pub fn extra_arg(mut self, arg: impl Into<String>) -> Self
+```
+
+Passes an arbitrary codegen argument string directly to the `rustc_codegen_spirv` backend. This is the programmatic equivalent of setting `RUSTGPU_CODEGEN_ARGS` in the environment.
+
+<Note>
+  The `RUSTGPU_CODEGEN_ARGS` environment variable takes **precedence** over any arguments set with `extra_arg()`. If that variable is set, all `extra_arg` values are ignored. See the [Codegen Args](./codegen-args) reference for all available flags.
+</Note>
+
+```rust
+SpirvBuilder::new("path/to/shader", "spirv-unknown-vulkan1.1")
+    .extra_arg("--no-spirv-opt")
+    .extra_arg("--dump-post-link=/tmp/spv-out")
+    .build()?;
+```
+
+---
+
+## SPIR-V Relaxation Options
+
+These flags correspond to SPIRV-Tools validator relaxation options. They are all `false` by default.
+
+### `.relax_struct_store(v: bool)`
+
+```rust
+pub fn relax_struct_store(mut self, v: bool) -> Self
+```
+
+Allow storing from one struct type to a different type with compatible layout and members. Corresponds to the spirv-val `--relax-struct-store` flag.
+
+### `.relax_logical_pointer(v: bool)`
+
+```rust
+pub fn relax_logical_pointer(mut self, v: bool) -> Self
+```
+
+Allow allocating an object of a pointer type and returning a pointer value from a function in logical addressing mode. Corresponds to `--relax-logical-pointer`.
+
+### `.relax_block_layout(v: bool)`
+
+```rust
+pub fn relax_block_layout(mut self, v: bool) -> Self
+```
+
+Enable `VK_KHR_relaxed_block_layout` when checking standard uniform, storage buffer, and push constant layouts. This is the default behaviour when targeting Vulkan 1.1 or later. Corresponds to `--relax-block-layout`.
+
+### `.uniform_buffer_standard_layout(v: bool)`
+
+```rust
+pub fn uniform_buffer_standard_layout(mut self, v: bool) -> Self
+```
+
+Enable `VK_KHR_uniform_buffer_standard_layout` when checking standard uniform buffer layouts. Corresponds to `--uniform-buffer-standard-layout`.
+
+### `.scalar_block_layout(v: bool)`
+
+```rust
+pub fn scalar_block_layout(mut self, v: bool) -> Self
+```
+
+Enable `VK_EXT_scalar_block_layout` when checking standard uniform, storage buffer, and push constant layouts. Scalar layout rules are more permissive than relaxed block layout, so this effectively overrides `.relax_block_layout()`. Corresponds to `--scalar-block-layout`.
+
+### `.skip_block_layout(v: bool)`
+
+```rust
+pub fn skip_block_layout(mut self, v: bool) -> Self
+```
+
+Skip checking standard uniform/storage buffer layout entirely. Overrides both `.relax_block_layout()` and `.scalar_block_layout()`. Corresponds to `--skip-block-layout`.
+
+### `.preserve_bindings(v: bool)`
+
+```rust
+pub fn preserve_bindings(mut self, v: bool) -> Self
+```
+
+Preserve all descriptor bindings, even those that appear unused after dead code elimination. Useful for shader reflection workflows that need to see the full binding layout at runtime. Corresponds to the spirv-opt `--preserve-bindings` flag.
+
+---
+
+## Full Chained Example
+
+```rust
+use spirv_builder::{
+    Capability, MetadataPrintout, ShaderPanicStrategy, SpirvBuilder, SpirvMetadata,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    SpirvBuilder::new("shaders/my-shader", "spirv-unknown-vulkan1.2")
+        .print_metadata(MetadataPrintout::Full)
+        .release(true)
+        .deny_warnings(true)
+        .spirv_metadata(SpirvMetadata::NameVariables)
+        .capability(Capability::Float64)
+        .extension("SPV_KHR_ray_tracing")
+        .shader_panic_strategy(ShaderPanicStrategy::DebugPrintfThenExit {
+            print_inputs: true,
+            print_backtrace: false,
+        })
+        .relax_block_layout(true)
+        .preserve_bindings(true)
+        .build()?;
+    Ok(())
+}
+```
+
+---
+
+## Error Type
+
+`build()` returns `Result<CompileResult, SpirvBuilderError>`. The error variants are:
+
+```rust
+#[non_exhaustive]
+pub enum SpirvBuilderError {
+    /// The path passed to SpirvBuilder::new does not exist on disk.
+    CratePathDoesntExist(PathBuf),
+
+    /// The underlying `cargo build` invocation exited with a non-zero status.
+    BuildFailed,
+
+    /// multimodule(true) is incompatible with MetadataPrintout::Full.
+    MultiModuleWithPrintMetadata,
+
+    /// watch mode is incompatible with MetadataPrintout::Full in build scripts.
+    WatchWithPrintMetadata,
+
+    /// The multi-module metadata JSON file could not be opened.
+    MetadataFileMissing(std::io::Error),
+
+    /// The multi-module metadata JSON file could not be parsed.
+    MetadataFileMalformed(serde_json::Error),
+}
+```
+
+`SpirvBuilderError` implements both `std::fmt::Display` and `std::error::Error`, so it can be propagated with `?` in a `build.rs` that returns `Result<(), Box<dyn std::error::Error>>`.

@@ -1,0 +1,116 @@
+---
+title: "Building Rust-GPU from Source"
+sidebarTitle: "Building"
+description: "Clone, build, and run Rust-GPU from source. Set up SPIRV-Tools, run example shaders with the wgpu or Vulkan runners, and configure Linux prerequisites."
+---
+
+This page covers building Rust-GPU itself from source, as opposed to using it as a dependency in your own project. This is the path for contributors, maintainers, and early adopters who want to run the very latest code or submit patches. If you just want to write shaders using a released version, see the [Quickstart](/quickstart) guide instead.
+
+## Prerequisites
+
+Before cloning and building, make sure you have the following in place.
+
+- **Git** with submodule support (`--recurse-submodules`)
+- **Rust nightly toolchain** — the correct nightly is pinned in `rust-toolchain.toml` at the repository root, so `rustup` will pick it up automatically when you run any `cargo` command inside the repo
+- **SPIRV-Tools** *(optional)* — required only if you want validation without compiling C++ yourself; download from the [SPIRV-Tools releases page](https://github.com/KhronosGroup/SPIRV-Tools#downloads) and add the binaries to your `PATH`
+
+### Linux Packages
+
+On Linux you may need the development headers for X11 and libxkbcommon, plus a C++ compiler, in order to compile the example runners. The exact package names differ by distribution:
+
+| Package purpose | Fedora | Ubuntu |
+|---|---|---|
+| X11 headers | `libX11-devel` | `libx11-dev` |
+| XKB common (X11) | `libxkbcommon-x11-devel` | `libxkbcommon-x11-dev` |
+| C++ compiler | `gcc-c++` | `gcc` |
+
+## Clone and Build
+
+<Note>
+The `--recurse-submodules` flag is required. Rust-GPU depends on submodules for parts of its SPIR-V tooling, and the build will fail without them.
+</Note>
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone --recurse-submodules https://github.com/EmbarkStudios/rust-gpu
+    cd rust-gpu
+    ```
+  </Step>
+
+  <Step title="Run the wgpu example runner">
+    ```bash
+    cargo run --bin example-runner-wgpu
+    ```
+  </Step>
+
+  <Step title="Observe the build pipeline">
+    Running the command above triggers the full build pipeline in three stages:
+
+    1. **`rustc_codegen_spirv`** — the compiler backend is compiled first
+    2. **`sky-shader`** — the sky shader example is compiled from Rust to a SPIR-V module using that backend
+    3. **`example-runner-wgpu`** — a `wgpu` sample app (adapted from the wgpu hello-triangle example) is compiled and launched, displaying the sky shader in a window
+  </Step>
+</Steps>
+
+## Example Runners
+
+The `examples/` directory contains two categories of projects.
+
+**Shaders** are GPU crates that compile to SPIR-V modules:
+
+| Shader | Description |
+|---|---|
+| `sky-shader` | A procedural sky shader |
+| `compute-shader` | A simple GPU compute example |
+| `simplest-shader` | The smallest possible Rust shader |
+| `mouse-shader` | Interactive shader driven by mouse position |
+| `reduce` | A parallel reduction compute shader |
+
+**Runners** are normal CPU crates that load and run one of those shader modules via a graphics backend:
+
+```bash
+# wgpu (cross-platform, default)
+cargo run --bin example-runner-wgpu
+
+# Vulkan via ash
+cargo run --bin example-runner-ash
+
+# Pure software CPU renderer (no GPU required)
+cargo run --bin example-runner-cpu
+```
+
+## Using Installed SPIRV-Tools
+
+By default, every crate and example in the repository compiles the `spirv-tools-sys` crate, which includes a substantial amount of C++ code from [SPIRV-Tools](https://github.com/KhronosGroup/SPIRV-Tools). If you already have SPIRV-Tools installed on your system, or simply want to avoid the extra C++ compilation time, you can skip that step with the `use-installed-tools` feature flag.
+
+<Tip>
+Using `--features use-installed-tools --no-default-features` can meaningfully speed up clean builds by avoiding the compilation of the bundled C++ SPIRV-Tools library.
+</Tip>
+
+```bash
+cargo run \
+    --manifest-path examples/example-runner/Cargo.toml \
+    --features use-installed-tools \
+    --no-default-features
+```
+
+During compilation you will see a warning confirming the feature is active:
+
+```
+warning: use-installed-tools feature on, skipping compilation of C++ code
+```
+
+The build will otherwise behave identically to the default — except it will fail if SPIRV-Tools is not installed and available on your `PATH`.
+
+## Workspace Structure
+
+Rust-GPU is organised as a Cargo workspace. The key directories are:
+
+| Path | Purpose |
+|---|---|
+| `crates/rustc_codegen_spirv` | The main compiler backend — translates Rust MIR to SPIR-V |
+| `crates/spirv-std` | The shader standard library (`spirv-std` crate) used in GPU crates |
+| `crates/spirv-builder` | Build-script helper for integrating `rustc_codegen_spirv` into a normal Cargo build |
+| `examples/` | Example shaders (`shaders/`) and their runner applications (`runners/`) |
+| `tests/` | Integration and compile tests |

@@ -1,0 +1,119 @@
+---
+title: "spirv-builder: Automate Rust Shader Compilation"
+sidebarTitle: "Overview"
+description: "spirv-builder is a Cargo build-script helper that drives rustc_codegen_spirv to compile Rust shader crates to SPIR-V binaries automatically."
+---
+
+`spirv-builder` is a Cargo build-script helper crate that wraps `rustc_codegen_spirv` — the custom Rust compiler backend that emits SPIR-V GPU shader code. By adding `spirv-builder` to your `[build-dependencies]`, you get a single, ergonomic API (`SpirvBuilder`) that invokes the full shader compilation pipeline from your `build.rs` and makes the resulting `.spv` binaries available to the rest of your application at compile time.
+
+This is the **recommended integration path** for any Rust project that ships GPU shaders. Instead of manually juggling `rustc` flags, dynamic library paths, and nightly toolchain requirements, `spirv-builder` handles all the plumbing: it locates the correct `rustc_codegen_spirv` shared library, constructs the right `RUSTFLAGS`, invokes a nested `cargo build` targeting the SPIR-V backend, and emits Cargo metadata so your main crate can reference the compiled output via environment variables.
+
+## Installation
+
+Add `spirv-builder` to your project's `[build-dependencies]` in `Cargo.toml`:
+
+```toml
+[build-dependencies]
+spirv-builder = { version = "0.9", default-features = true }
+```
+
+You must also copy the [`rust-toolchain.toml`](https://github.com/EmbarkStudios/rust-gpu/blob/main/rust-toolchain.toml) file from the rust-gpu repository into your project root. `spirv-builder` requires a specific nightly Rust toolchain that matches the version of `rustc_codegen_spirv` it was built against — the build will fail with a clear error if the toolchain version does not match.
+
+### Features
+
+`spirv-builder` exposes two mutually exclusive features that control how SPIRV-Tools (the validator and optimizer) are provided:
+
+| Feature | Description | Default |
+|---|---|---|
+| `use-compiled-tools` | Compiles SPIRV-Tools from bundled C++ source code. No system dependencies required. | ✅ Yes |
+| `use-installed-tools` | Uses a system-installed `spirv-val` and `spirv-opt` found on `PATH`. Faster to build. | No |
+
+At least one of these features **must** be enabled. To switch to system-installed tools:
+
+```toml
+[build-dependencies]
+spirv-builder = { version = "0.9", default-features = false, features = ["use-installed-tools"] }
+```
+
+There is also an optional `watch` feature for hot-reload support — see [Watch Mode](#watch-mode) below.
+
+<Note>
+  Build dependencies are compiled in **debug mode** by default, which makes `rustc_codegen_spirv` extremely slow. Add the following to your workspace `Cargo.toml` to compile all build-script dependencies at an optimized level:
+
+  ```toml
+  # Compile build-dependencies in release mode with the same settings
+  # as regular dependencies.
+  [profile.release.build-override]
+  opt-level = 3
+  codegen-units = 16
+
+  [profile.dev.build-override]
+  opt-level = 3
+  ```
+
+  This optimization applies to _all_ build script dependencies, which may slightly increase clean-build times but dramatically reduces shader compilation time during development. See [rust-gpu issue #448](https://github.com/EmbarkStudios/rust-gpu/issues/448) for important caveats.
+</Note>
+
+## Basic Usage
+
+Create a `build.rs` file in your project root with the following minimal setup:
+
+```rust
+use spirv_builder::{MetadataPrintout, SpirvBuilder};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    SpirvBuilder::new("path/to/shader", "spirv-unknown-vulkan1.1")
+        .print_metadata(MetadataPrintout::Full)
+        .build()?;
+    Ok(())
+}
+```
+
+The first argument to `SpirvBuilder::new` is a path to your shader crate, relative to the `build.rs` file. The second argument is the SPIR-V target triple. For a full list of supported target triples, see the [platform support](../platform-support) page. Common choices include:
+
+- `"spirv-unknown-vulkan1.1"` — Vulkan 1.1 (most common)
+- `"spirv-unknown-vulkan1.2"` — Vulkan 1.2
+- `"spirv-unknown-spv1.3"` — raw SPIR-V 1.3
+
+`MetadataPrintout::Full` instructs `spirv-builder` to emit `cargo:rustc-env` metadata, which makes the compiled shader path accessible as an environment variable in your main crate (see below).
+
+## Loading the Compiled Shader
+
+When `print_metadata` is set to `MetadataPrintout::Full`, `spirv-builder` emits a `cargo:rustc-env` line that sets an environment variable named after the shader crate (with `.spv` appended). You can `include_bytes!` this at compile time in your application:
+
+```rust
+// The env var name is "<shader_crate_name>.spv"
+const SHADER: &[u8] = include_bytes!(env!("my_shader.spv"));
+```
+
+<Note>
+  If your shader crate name contains hyphens (e.g. `my-shader`), the environment variable name will have hyphens converted to underscores (e.g. `my_shader.spv`). This matches standard Cargo environment variable naming conventions.
+</Note>
+
+The `SHADER` constant contains the raw SPIR-V binary, ready to be passed to your Vulkan or wgpu device for shader module creation.
+
+## Watch Mode
+
+`spirv-builder` includes an optional `watch` feature that enables filesystem watching for hot-reload workflows. When enabled, your build script can re-trigger shader compilation automatically whenever shader source files change, without requiring a full `cargo build` cycle.
+
+Enable it by adding the feature to your build dependency:
+
+```toml
+[build-dependencies]
+spirv-builder = { version = "0.9", features = ["use-compiled-tools", "watch"] }
+```
+
+<Note>
+  The `watch` feature is incompatible with `MetadataPrintout::Full` — using both will return a `SpirvBuilderError::WatchWithPrintMetadata` error. Watch mode is intended for interactive development tools, not standard build scripts.
+</Note>
+
+---
+
+<CardGroup cols={2}>
+  <Card title="Configuration Reference" icon="sliders" href="./configuration">
+    All `SpirvBuilder` methods: capabilities, extensions, metadata, panic strategy, relaxation options, and more.
+  </Card>
+  <Card title="Codegen Args" icon="terminal" href="./codegen-args">
+    Internal debug flags passed via `RUSTGPU_CODEGEN_ARGS` or `extra_arg()` for diagnosing shader compilation issues.
+  </Card>
+</CardGroup>

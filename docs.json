@@ -1,72 +1,65 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "Rust-GPU",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
-  },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "primary": "#B7410E",
+    "light": "#FF6B35",
+    "dark": "#7A2A08"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/EmbarkStudios/rust-gpu"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/EmbarkStudios/rust-gpu"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "platform-support"
+            ]
+          },
+          {
+            "group": "Writing Shaders",
+            "pages": [
+              "writing-shaders/shader-crates",
+              "writing-shaders/attributes",
+              "writing-shaders/images",
+              "writing-shaders/inline-asm",
+              "writing-shaders/ray-tracing"
+            ]
+          },
+          {
+            "group": "spirv-builder",
+            "pages": [
+              "spirv-builder/overview",
+              "spirv-builder/configuration",
+              "spirv-builder/codegen-args"
+            ]
+          },
+          {
+            "group": "Contributing",
+            "pages": [
+              "contributing/building",
+              "contributing/testing",
+              "contributing/spirv-debugging",
+              "contributing/publishing"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

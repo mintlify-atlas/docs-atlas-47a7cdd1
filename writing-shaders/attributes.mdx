@@ -1,0 +1,208 @@
+---
+title: "SPIR-V Shader Attributes in Rust-GPU"
+sidebarTitle: "Attributes"
+description: "Reference for all #[spirv(...)] attributes: entry points, builtins, descriptor bindings, workgroup memory, flat, invariant, and specialization constants."
+---
+
+Rust-GPU introduces the `#[spirv(...)]` attribute family to express GPU-specific behavior that has no equivalent in standard Rust. These attributes inform the compiler about entry-point types, built-in variables, descriptor locations, specialization constants, and storage classes. Before using any `spirv(...)` attribute, import the macro from `spirv-std`:
+
+```rust
+use spirv_std::spirv;
+```
+
+Without this import, the compiler will not recognize `#[spirv(...)]` and will emit an error.
+
+## Entry Points
+
+Entry-point attributes tell SPIR-V what kind of shader stage a function belongs to and cause it to be exported from the shader module. Functions without an entry-point attribute remain internal helpers and are not visible to the graphics pipeline.
+
+Common values are `#[spirv(fragment)]` and `#[spirv(vertex)]`. The full list of supported execution models can be found in the [`spirv_headers::ExecutionModel`](https://docs.rs/spirv_headers/1.5.0/spirv_headers/enum.ExecutionModel.html) enum — convert each variant name to `snake_case` to get the Rust-GPU attribute name.
+
+```rust
+#[spirv(fragment)]
+pub fn main_fs() {}
+
+#[spirv(vertex)]
+pub fn main_vs() {}
+```
+
+### Compute Shader Dimensions
+
+Compute shaders must declare their workgroup dimensions (equivalent to `numthreads` in HLSL or `local_size_*` in OpenGL) using the `threads(x, y, z)` sub-attribute. Trailing `1` values may be omitted.
+
+```rust
+// Equivalent to threads(32, 1, 1)
+#[spirv(compute(threads(32)))]
+pub fn compute_1() {}
+
+// Equivalent to threads(32, 57, 1)
+#[spirv(compute(threads(32, 57)))]
+pub fn compute_2() {}
+
+// All three dimensions specified explicitly
+#[spirv(compute(threads(32, 16, 97)))]
+pub fn compute_3() {}
+```
+
+### Overriding Entry Point Names
+
+By default the exported `OpEntryPoint` name matches the Rust function name. Override it with the `entry_point_name` sub-attribute on any entry-point variant:
+
+```rust
+#[spirv(vertex(entry_point_name = "vs_main"))]
+pub fn my_vertex_shader(#[spirv(position)] pos: &mut Vec4) {}
+```
+
+## Builtins
+
+Builtin attributes declare shader parameters that have special meaning assigned by the GPU hardware or driver — for example the output clip-space position of a vertex, or the fragment coordinate in screen space. Apply them to individual function parameters.
+
+```rust
+use spirv_std::glam::{UVec3, Vec4};
+use spirv_std::spirv;
+
+#[spirv(vertex)]
+pub fn main_vs(
+    #[spirv(vertex_index)] vert_idx: i32,
+    #[spirv(position)] out_pos: &mut Vec4,
+) {
+    // vert_idx is the built-in vertex index (gl_VertexIndex in GLSL)
+    // out_pos  is the built-in clip-space output position (gl_Position in GLSL)
+}
+
+#[spirv(fragment)]
+pub fn main_fs(
+    #[spirv(frag_coord)] frag_coord: Vec4,
+    output: &mut Vec4,
+) {
+    // frag_coord is the built-in fragment position (gl_FragCoord in GLSL)
+}
+
+#[spirv(compute(threads(64)))]
+pub fn main_cs(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(workgroup_id)] wg_id: UVec3,
+    #[spirv(local_invocation_id)] local_id: UVec3,
+) {}
+```
+
+Common builtins include `position`, `vertex_index`, `instance_index`, `frag_coord`, `front_facing`, `global_invocation_id`, `local_invocation_id`, `workgroup_id`, `num_workgroups`, and many more. The full list of supported names can be found in [`spirv_headers::BuiltIn`](https://docs.rs/spirv_headers/1.5.0/spirv_headers/enum.BuiltIn.html) — convert each variant name to `snake_case`.
+
+## Descriptor Set and Binding
+
+Uniform resources (textures, buffers, samplers) must be declared with explicit `descriptor_set` and `binding` indices that match the pipeline layout on the CPU side. Both attributes accept a non-negative integer.
+
+```rust
+use spirv_std::glam::Vec4;
+use spirv_std::spirv;
+
+#[spirv(fragment)]
+pub fn main_fs(
+    #[spirv(uniform, descriptor_set = 2, binding = 5)] color: &Vec4,
+    output: &mut Vec4,
+) {
+    *output = *color;
+}
+```
+
+<Warning>
+  `descriptor_set = 0` is **reserved for future use** by Rust-GPU and cannot be
+  used in user shaders. Start your descriptor sets at index `1` or higher.
+</Warning>
+
+## Flat
+
+The `flat` attribute disables interpolation across the triangle, equivalent to the `flat` qualifier in GLSL. It is most commonly used on integer inputs to fragment shaders, which cannot be interpolated.
+
+```rust
+#[spirv(fragment)]
+pub fn main_fs(#[spirv(flat)] instance_id: u32) {
+    // instance_id is passed through from the vertex shader without interpolation
+}
+```
+
+## Invariant
+
+The `invariant` attribute marks an output variable as invariant — the GPU must produce the same value for the same inputs across multiple passes. This corresponds to the `invariant` qualifier in GLSL. It may only be applied to output variables.
+
+```rust
+#[spirv(vertex)]
+pub fn main_vs(#[spirv(invariant)] depth: &mut f32) {}
+```
+
+## Workgroup Shared Memory
+
+The `workgroup` attribute allocates shared memory that is accessible by all invocations within the same compute workgroup. This corresponds to `shared` in GLSL or `groupshared` in HLSL. Shared memory can only be used in compute shaders.
+
+```rust
+use spirv_std::glam::Vec4;
+use spirv_std::spirv;
+
+#[spirv(compute(threads(32)))]
+pub fn main_cs(
+    #[spirv(global_invocation_id)] id: spirv_std::glam::UVec3,
+    #[spirv(workgroup)] shared: &mut [Vec4; 4],
+) {
+    shared[id.x as usize % 4] = Vec4::ONE;
+}
+```
+
+## Specialization Constants
+
+Specialization constants are shader inputs whose values are fixed at pipeline-creation time, not at shader-compile time. They allow a single compiled SPIR-V module to behave differently depending on how the pipeline is configured, without recompiling the shader.
+
+Each specialization constant is identified by a user-specified numeric ID (`SpecId` in SPIR-V). If not overridden at pipeline creation time, the constant falls back to its default value (`0` if `default` is not specified).
+
+Currently only `u32` is directly supported as a specialization constant type. Larger types can be assembled from multiple `u32` constants.
+
+```rust
+use spirv_std::spirv;
+
+#[spirv(vertex)]
+pub fn main_vs(
+    // Default is implicitly `0` when not specified.
+    #[spirv(spec_constant(id = 1))] no_default: u32,
+
+    // IDs do not need to be sequential.
+    #[spirv(spec_constant(id = 9000, default = 123))] default_123: u32,
+
+    // Assembling a 64-bit value from two 32-bit specialization constants.
+    #[spirv(spec_constant(id = 100))] x_u64_lo: u32,
+    #[spirv(spec_constant(id = 101))] x_u64_hi: u32,
+) {
+    let x_u64 = ((x_u64_hi as u64) << 32) | (x_u64_lo as u64);
+}
+```
+
+Specialization constants can be overridden:
+
+- **Vulkan**: via [`VkSpecializationInfo`](https://registry.khronos.org/vulkan/specs/1.3-extensions/html/chap10.html#pipelines-specialization-constants) during pipeline creation.
+- **WebGPU**: via [`GPUProgrammableStage#constants`](https://www.w3.org/TR/webgpu/#gpuprogrammablestage) (WebGPU calls them "pipeline-overridable constants").
+- **OpenCL**: via [`clSetProgramSpecializationConstant()`](https://registry.khronos.org/OpenCL/sdk/3.0/docs/man/html/clSetProgramSpecializationConstant.html) before `clBuildProgram()`.
+
+<Note>
+  Despite the name "constants", specialization constants are **runtime values**
+  from the perspective of compiled Rust code — similar in concept to link-time
+  constants. They have no connection to Rust `const` items or `const` generics.
+  You cannot use a specialization constant as an array length or a type-level
+  constant, as that would require dependent types. Their advantage over fully
+  dynamic uniform inputs is a potential performance improvement because the
+  driver can optimize the pipeline at creation time.
+</Note>
+
+## Generic Storage Classes
+
+The SPIR-V storage class of types is inferred for function signatures. The inference logic can be guided by attributes on the interface specification in the entry points. Storage class attributes (such as `workgroup`, `uniform`, `ray_payload`, `incoming_ray_payload`, and `push_constant`) are only permitted on entry-point parameters.
+
+```rust
+use spirv_std::spirv;
+use spirv_std::glam::Vec4;
+
+#[spirv(fragment)]
+pub fn main_fs(
+    #[spirv(push_constant)] constants: &Vec4,
+    output: &mut Vec4,
+) {
+    *output = *constants;
+}
+```

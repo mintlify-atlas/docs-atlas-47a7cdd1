@@ -1,0 +1,95 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Rust-GPU",
+  "projectDescription": "A compiler backend and standard library that enables writing GPU shaders in Rust, compiling them to SPIR-V for use with Vulkan, wgpu, and other graphics APIs.",
+  "theme": "aspen",
+  "primaryColor": "#B7410E",
+  "lightColor": "#FF6B35",
+  "darkColor": "#7A2A08",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "platform-support"
+            ]
+          },
+          {
+            "group": "Writing Shaders",
+            "pages": [
+              "writing-shaders/shader-crates",
+              "writing-shaders/attributes",
+              "writing-shaders/images",
+              "writing-shaders/inline-asm",
+              "writing-shaders/ray-tracing"
+            ]
+          },
+          {
+            "group": "spirv-builder",
+            "pages": [
+              "spirv-builder/overview",
+              "spirv-builder/configuration",
+              "spirv-builder/codegen-args"
+            ]
+          },
+          {
+            "group": "Contributing",
+            "pages": [
+              "contributing/building",
+              "contributing/testing",
+              "contributing/spirv-debugging",
+              "contributing/publishing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Write GPU shaders entirely in Rust with full language support",
+    "Compiles Rust to SPIR-V via a custom rustc codegen backend",
+    "spirv-std provides a no_std shader standard library with image, sampler, and math types",
+    "spirv-builder crate automates shader compilation from build scripts",
+    "Supports Vulkan, wgpu, WebGPU, OpenCL, and raw SPIR-V targets",
+    "Inline SPIR-V assembly support via Rust's asm! macro",
+    "Ray tracing support via AccelerationStructure and related types",
+    "Specialization constants, workgroup shared memory, and descriptor set binding attributes",
+    "SPIR-T IR framework for robust structurization and optimization",
+    "Panic handling strategies including debugPrintf-based reporting"
+  ],
+  "publicApiSurface": [
+    "spirv_builder::SpirvBuilder",
+    "spirv_builder::SpirvBuilder::new(path_to_crate, target)",
+    "spirv_builder::SpirvBuilder::build()",
+    "spirv_builder::SpirvBuilder::print_metadata(MetadataPrintout)",
+    "spirv_builder::SpirvBuilder::capability(Capability)",
+    "spirv_builder::SpirvBuilder::extension(extension)",
+    "spirv_builder::SpirvBuilder::multimodule(bool)",
+    "spirv_builder::SpirvBuilder::spirv_metadata(SpirvMetadata)",
+    "spirv_builder::SpirvBuilder::shader_panic_strategy(ShaderPanicStrategy)",
+    "spirv_builder::MetadataPrintout",
+    "spirv_builder::SpirvMetadata",
+    "spirv_builder::ShaderPanicStrategy",
+    "spirv_std::spirv (proc macro attribute)",
+    "#[spirv(fragment)], #[spirv(vertex)], #[spirv(compute(threads(...)))]",
+    "#[spirv(position)], #[spirv(vertex_id)], and other builtin attributes",
+    "#[spirv(descriptor_set = N, binding = N)]",
+    "#[spirv(workgroup)]",
+    "#[spirv(spec_constant(id = N, default = N))]",
+    "spirv_std::image::Image (generic image type)",
+    "spirv_std::Image! (macro for image type construction)",
+    "spirv_std::image::Image2d, Image3d, StorageImage2d, etc.",
+    "spirv_std::Sampler",
+    "spirv_std::ByteAddressableBuffer",
+    "spirv_std::ray_tracing::AccelerationStructure",
+    "spirv_std::arch (SPIR-V intrinsics: any, all, atomics, barriers, derivatives)",
+    "spirv_std::glam (re-exported glam math types)",
+    "RUSTGPU_CODEGEN_ARGS environment variable",
+    "RUSTGPU_RUSTFLAGS environment variable"
+  ]
+}

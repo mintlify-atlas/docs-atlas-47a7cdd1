@@ -1,0 +1,82 @@
+---
+title: "Testing Rust-GPU: Unit and End-to-End Tests"
+sidebarTitle: "Testing"
+description: "Run Rust-GPU's unit tests with cargo test and end-to-end SPIR-V compilation tests with cargo compiletest. Learn to bless, filter, and target-env tests."
+---
+
+Rust-GPU has two complementary test suites. Standard Rust unit and integration tests run through the familiar `cargo test` command. In addition, Rust-GPU includes a set of end-to-end compilation tests that compile Rust source snippets all the way to SPIR-V and validate the output — these run through a separate `cargo compiletest` command powered by the external [`compiletest-rs`](https://github.com/laumann/compiletest-rs) tool. Both suites should be green before opening a pull request.
+
+## Running All Tests
+
+To run both suites back-to-back:
+
+```bash
+cargo test && cargo compiletest
+```
+
+## Unit Tests
+
+Standard unit and integration tests live throughout the workspace alongside their respective crates. Run them with:
+
+```bash
+cargo test
+```
+
+This covers in-process logic across `rustc_codegen_spirv`, `spirv-std`, `spirv-builder`, and the helper crates.
+
+## Compile Tests (compiletest)
+
+The end-to-end compile tests live in `tests/ui/`. Each `.rs` file in that directory is compiled from Rust to SPIR-V by the real `rustc_codegen_spirv` backend, and the resulting output (SPIR-V assembly, compiler diagnostics, etc.) is compared against a stored `.stderr` / `.stdout` snapshot.
+
+The framework is the external [`compiletest-rs`](https://github.com/laumann/compiletest-rs) library, which mirrors the test infrastructure used by the Rust compiler itself.
+
+```bash
+cargo compiletest
+```
+
+### Blessing Tests
+
+When you make a change that intentionally alters the compiled SPIR-V output or compiler diagnostics, the existing snapshots will no longer match. You need to "bless" the new output to update the stored expectations:
+
+```bash
+cargo compiletest --bless
+```
+
+Run this after confirming that the new output is correct, then commit the updated snapshot files alongside your code change.
+
+### Filtering Tests
+
+Running the full compile-test suite on every iteration can be slow. You can pass one or more path substrings to `cargo compiletest` to restrict which tests are executed:
+
+```bash
+cargo compiletest arch/u image
+# Runs only ui/arch/u_*.rs and ui/image/*.rs, skipping everything else
+```
+
+You can combine filtering with blessing:
+
+```bash
+cargo compiletest arch/u --bless
+```
+
+### Testing Different Environments
+
+SPIR-V has different feature sets depending on the target execution environment (Vulkan version, SPIR-V version, etc.). The `--target-env` flag lets you validate output against a specific environment. The default is `unknown`.
+
+```bash
+cargo compiletest --target-env=vulkan1.1
+```
+
+You can also provide a comma-separated list to test multiple environments in one invocation:
+
+```bash
+cargo compiletest --target-env=vulkan1.1,spv1.3
+```
+
+## Adding Tests
+
+New compile tests belong in `tests/ui/`. Create a `.rs` file that exercises the behaviour you want to verify, then run `cargo compiletest --bless` to generate the initial snapshot.
+
+<Note>
+For conventions around structuring and annotating compiletest source files — such as `// compile-flags`, `// error-pattern`, and revision directives — refer to the [rustc Dev Guide's test documentation](https://rustc-dev-guide.rust-lang.org/tests/intro.html). Rust-GPU's compile tests follow the same conventions as the upstream Rust compiler tests.
+</Note>

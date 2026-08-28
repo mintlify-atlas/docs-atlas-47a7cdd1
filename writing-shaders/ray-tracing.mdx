@@ -1,0 +1,265 @@
+---
+title: "Ray Tracing Shaders with Rust-GPU"
+sidebarTitle: "Ray Tracing"
+description: "Use AccelerationStructure, ray generation, closest hit, and miss shader entry points in Rust-GPU for Vulkan ray tracing pipelines."
+---
+
+Rust-GPU provides first-class support for hardware ray tracing via `spirv_std::ray_tracing`. The module exposes `AccelerationStructure`, `RayQuery`, `RayFlags`, and other types that map directly to their Vulkan and SPIR-V counterparts. Entry-point attributes for all five ray tracing shader stages — ray generation, closest hit, any hit, intersection, and miss — are available through the standard `#[spirv(...)]` mechanism. Ray tracing also supports an inline `RayQuery` path for ray-tracing from within rasterization and compute shaders.
+
+<Warning>
+  Hardware ray tracing requires **Vulkan 1.1 or later** with the
+  `VK_KHR_ray_tracing_pipeline` device extension enabled. Always verify
+  extension support at runtime before creating ray tracing pipelines.
+</Warning>
+
+## AccelerationStructure
+
+An `AccelerationStructure` is an opaque GPU-side data structure that organises scene geometry for efficient ray intersection queries. Bind one as a descriptor-set resource in your shader and use it to trace rays.
+
+```rust
+use spirv_std::ray_tracing::AccelerationStructure;
+```
+
+The `AccelerationStructure` type cannot be created from Rust values directly; you can only receive it as a shader input. However, when constructing one manually from raw GPU addresses (for example in tests or advanced use cases), two unsafe constructors are available:
+
+```rust
+use spirv_std::ray_tracing::AccelerationStructure;
+
+// From a raw 64-bit GPU virtual address.
+// Safety: `id` must point to a valid acceleration structure.
+let accel: AccelerationStructure = unsafe {
+    AccelerationStructure::from_u64(device_address)
+};
+
+// From a uvec2 representation (two packed u32 values).
+// Safety: the combined value must point to a valid acceleration structure.
+let accel: AccelerationStructure = unsafe {
+    AccelerationStructure::from_vec(glam::uvec2(lo, hi))
+};
+```
+
+<Note>
+  Both `from_u64` and `from_vec` are marked `unsafe` because the caller must
+  guarantee that the integer value is a valid pointer to an acceleration
+  structure that has been built and is resident on the GPU. Passing an invalid
+  address produces undefined behavior.
+</Note>
+
+### Tracing a Ray
+
+Call `trace_ray` on an `AccelerationStructure` to shoot a ray into the scene. This operation is only available in ray generation, closest hit, and miss shaders.
+
+```rust
+use spirv_std::ray_tracing::{AccelerationStructure, RayFlags};
+
+// Inside a ray_generation entry point:
+unsafe {
+    accel_structure.trace_ray(
+        RayFlags::NONE,
+        0xFF,        // cull_mask: test all instances
+        0,           // sbt_offset
+        0,           // sbt_stride
+        0,           // miss_index
+        glam::vec3(0.0, 0.0, 0.0), // ray_origin
+        0.001,       // ray_tmin
+        glam::vec3(0.0, 0.0, 1.0), // ray_direction
+        10000.0,     // ray_tmax
+        &mut payload,
+    );
+}
+```
+
+### RayFlags
+
+`RayFlags` is a `bitflags!` type controlling the behaviour of the ray traversal:
+
+| Flag | Description |
+|---|---|
+| `RayFlags::NONE` | No flags. |
+| `RayFlags::OPAQUE` | Force all intersections to be treated as opaque. |
+| `RayFlags::NO_OPAQUE` | Force all intersections to be treated as non-opaque. |
+| `RayFlags::TERMINATE_ON_FIRST_HIT` | Accept the first hit found. |
+| `RayFlags::SKIP_CLOSEST_HIT_SHADER` | Do not invoke the closest-hit shader. |
+| `RayFlags::CULL_BACK_FACING_TRIANGLES` | Skip back-facing triangles. |
+| `RayFlags::CULL_FRONT_FACING_TRIANGLES` | Skip front-facing triangles. |
+| `RayFlags::CULL_OPAQUE` | Skip opaque geometry. |
+| `RayFlags::CULL_NO_OPAQUE` | Skip non-opaque geometry. |
+| `RayFlags::SKIP_TRIANGLES` | Skip all triangle geometry. |
+| `RayFlags::SKIP_AABBS` | Skip all AABB geometry. |
+
+## Ray Tracing Entry Points
+
+Each stage in a ray tracing pipeline is declared with a corresponding `#[spirv(...)]` attribute:
+
+| Attribute | SPIR-V Execution Model | When invoked |
+|---|---|---|
+| `#[spirv(ray_generation)]` | `RayGenerationKHR` | Once per pixel / launch invocation |
+| `#[spirv(closest_hit)]` | `ClosestHitKHR` | When the closest intersection is found |
+| `#[spirv(any_hit)]` | `AnyHitKHR` | For each candidate intersection (can reject) |
+| `#[spirv(intersection)]` | `IntersectionKHR` | For custom (non-triangle) geometry |
+| `#[spirv(miss)]` | `MissKHR` | When no intersection is found |
+
+### Example: Ray Generation Shader
+
+```rust
+#![no_std]
+
+use spirv_std::spirv;
+use spirv_std::ray_tracing::{AccelerationStructure, RayFlags};
+use spirv_std::glam::{vec3, Vec3};
+
+#[spirv(ray_generation)]
+pub fn ray_gen(
+    #[spirv(launch_id)] launch_id: spirv_std::glam::UVec3,
+    #[spirv(launch_size)] launch_size: spirv_std::glam::UVec3,
+    #[spirv(descriptor_set = 1, binding = 0)]
+    tlas: &AccelerationStructure,
+    #[spirv(ray_payload)] payload: &mut Vec3,
+) {
+    let uv = spirv_std::glam::vec2(
+        launch_id.x as f32 / launch_size.x as f32,
+        launch_id.y as f32 / launch_size.y as f32,
+    );
+    let ray_dir = vec3(uv.x * 2.0 - 1.0, uv.y * 2.0 - 1.0, -1.0).normalize();
+
+    *payload = Vec3::ZERO;
+
+    unsafe {
+        tlas.trace_ray(
+            RayFlags::NONE,
+            0xFF,
+            0,
+            0,
+            0,
+            vec3(0.0, 0.0, 2.0),
+            0.001,
+            ray_dir,
+            1000.0,
+            payload,
+        );
+    }
+}
+```
+
+### Example: Closest Hit Shader
+
+```rust
+#![no_std]
+
+use spirv_std::spirv;
+use spirv_std::glam::{Vec3, vec3};
+
+#[spirv(closest_hit)]
+pub fn closest_hit(
+    #[spirv(world_ray_origin)] ray_origin: Vec3,
+    #[spirv(world_ray_direction)] ray_direction: Vec3,
+    #[spirv(ray_tmax)] hit_t: f32,
+    #[spirv(hit_kind)] hit_kind: u32,
+    #[spirv(incoming_ray_payload)] payload: &mut Vec3,
+) {
+    // Compute the hit position and shade it.
+    let hit_pos = ray_origin + ray_direction * hit_t;
+    *payload = hit_pos.normalize().abs();
+}
+```
+
+### Example: Miss Shader
+
+```rust
+#![no_std]
+
+use spirv_std::spirv;
+use spirv_std::glam::Vec3;
+
+#[spirv(miss)]
+pub fn miss(
+    #[spirv(incoming_ray_payload)] payload: &mut Vec3,
+) {
+    // Return a sky colour when no geometry is hit.
+    *payload = Vec3::new(0.2, 0.4, 0.8);
+}
+```
+
+## Ray Tracing Builtins
+
+Ray tracing shader stages expose a rich set of built-in variables through `#[spirv(...)]` parameter attributes:
+
+| Attribute | Available in | Description |
+|---|---|---|
+| `#[spirv(launch_id)]` | All RT stages | 3D index of the current launch invocation |
+| `#[spirv(launch_size)]` | All RT stages | Total 3D size of the launch |
+| `#[spirv(world_ray_origin)]` | `closest_hit`, `any_hit`, `miss`, `intersection` | World-space ray origin |
+| `#[spirv(world_ray_direction)]` | `closest_hit`, `any_hit`, `miss`, `intersection` | World-space ray direction |
+| `#[spirv(ray_tmin)]` | `closest_hit`, `any_hit`, `miss`, `intersection` | Minimum ray parameter `t` |
+| `#[spirv(ray_tmax)]` | `closest_hit`, `any_hit` | Maximum ray parameter `t` at the hit |
+| `#[spirv(hit_kind)]` | `closest_hit`, `any_hit` | Integer identifying the geometry hit type |
+| `#[spirv(incoming_ray_flags)]` | `closest_hit`, `any_hit` | `RayFlags` bits from the originating `trace_ray` call |
+| `#[spirv(instance_id)]` | `closest_hit`, `any_hit` | Index of the hit geometry instance |
+| `#[spirv(instance_custom_index)]` | `closest_hit`, `any_hit` | User-defined per-instance index |
+| `#[spirv(object_ray_origin)]` | `closest_hit`, `any_hit`, `intersection` | Object-space ray origin |
+| `#[spirv(object_ray_direction)]` | `closest_hit`, `any_hit`, `intersection` | Object-space ray direction |
+| `#[spirv(object_to_world)]` | `closest_hit`, `any_hit` | Object-to-world transform matrix |
+| `#[spirv(world_to_object)]` | `closest_hit`, `any_hit` | World-to-object transform matrix |
+| `#[spirv(ray_geometry_index)]` | `closest_hit`, `any_hit` | Index of the geometry within the BLAS |
+
+Use `#[spirv(ray_payload)]` on a mutable reference parameter in a ray generation shader to declare the outgoing payload, and `#[spirv(incoming_ray_payload)]` in closest hit, any hit, and miss shaders to receive it.
+
+## Required Capabilities
+
+Ray tracing shaders require the `RayTracingKHR` SPIR-V capability and the `SPV_KHR_ray_tracing` extension. Enable them via `SpirvBuilder` in your `build.rs`:
+
+```rust
+use spirv_builder::{SpirvBuilder, MetadataPrintout, Capability};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    SpirvBuilder::new("path/to/shader_crate", "spirv-unknown-vulkan1.2")
+        .print_metadata(MetadataPrintout::Full)
+        .capability(Capability::RayTracingKHR)
+        .extension("SPV_KHR_ray_tracing")
+        .build()?;
+    Ok(())
+}
+```
+
+You can also enable these features at the crate level via `compile-flags` in a `.cargo/config.toml`:
+
+```toml
+[build]
+rustflags = [
+    "-Ctarget-feature=+RayTracingKHR,+ext:SPV_KHR_ray_tracing"
+]
+```
+
+## RayQuery (Inline Ray Tracing)
+
+In addition to the dedicated ray tracing pipeline stages above, SPIR-V also supports **inline ray queries** that can be used from within any shader stage (compute, fragment, vertex). Rust-GPU exposes this through `spirv_std::ray_tracing::RayQuery` and the `ray_query!` macro.
+
+```rust
+use spirv_std::{ray_query, ray_tracing::{RayQuery, RayFlags, CommittedIntersection}};
+
+// Declare a ray query variable using the macro
+ray_query!(let mut query);
+
+unsafe {
+    query.initialize(
+        &accel_structure,
+        RayFlags::TERMINATE_ON_FIRST_HIT,
+        0xFF,
+        ray_origin,
+        0.001,
+        ray_direction,
+        1000.0,
+    );
+
+    while query.proceed() {
+        query.confirm_intersection();
+    }
+
+    if let CommittedIntersection::Triangle = query.get_committed_intersection_type() {
+        let t = query.get_committed_intersection_t();
+        // use t ...
+    }
+}
+```
+
+`RayQuery` requires the `RayQueryKHR` capability and `SPV_KHR_ray_query` extension instead of `RayTracingKHR`.

@@ -1,0 +1,94 @@
+---
+title: "Publishing Rust-GPU Crates to crates.io"
+sidebarTitle: "Publishing"
+description: "Steps for Rust-GPU maintainers to publish new versions of spirv-builder, spirv-std, and rustc_codegen_spirv to crates.io with correct ordering and version bumps."
+---
+
+This page is for Rust-GPU maintainers performing a release. It covers the correct publish order, version-bumping procedure, and the steps required to push a new version of the Rust-GPU crate family to crates.io. If you are a contributor (rather than a maintainer with access to Embark's crates.io account), you most likely do not need this page.
+
+<Note>
+Publishing requires access to Embark Studios' crates.io account. The steps below assume your `~/.cargo/credentials` file is configured with the appropriate token. If you are a contributor rather than a maintainer, you can safely ignore this page.
+</Note>
+
+## Published Crates
+
+Rust-GPU publishes six crates, each located in a sub-directory of the repository:
+
+| Crate | Path |
+|---|---|
+| `spirv-std-types` | `crates/spirv-std/shared` |
+| `spirv-std-macros` | `crates/spirv-std/macros` |
+| `spirv-std` | `crates/spirv-std` |
+| `rustc_codegen_spirv-types` | `crates/rustc_codegen_spirv-types` |
+| `rustc_codegen_spirv` | `crates/rustc_codegen_spirv` |
+| `spirv-builder` | `crates/spirv-builder` |
+
+<Warning>
+The publishing order above is critical. Each crate may depend on crates earlier in the list. Publishing out of order will cause `cargo publish` to fail because crates.io will not yet know about the dependency at the version you are trying to publish. Always publish in the order shown.
+</Warning>
+
+## Publishing Steps
+
+<Steps>
+  <Step title="Bump all versions in the workspace Cargo.toml">
+    Rust-GPU uses [Cargo workspace inheritance](https://doc.rust-lang.org/cargo/reference/workspaces.html#the-package-table), so the single source of truth for all crate versions is the `[workspace.package]` section of the root `Cargo.toml`. Update the `version` field there to the new release version.
+
+    Also update the `[workspace.dependencies]` entries that reference internal rust-gpu crates. These must be pinned to their **exact** new version using the `=` notation to prevent consumers from accidentally mixing versions:
+
+    ```toml
+    # workspace Cargo.toml — [workspace.dependencies]
+    spirv-builder         = { path = "./crates/spirv-builder",         version = "=0.10.0", default-features = false }
+    spirv-std             = { path = "./crates/spirv-std",             version = "=0.10.0" }
+    spirv-std-types       = { path = "./crates/spirv-std/shared",      version = "=0.10.0" }
+    spirv-std-macros      = { path = "./crates/spirv-std/macros",      version = "=0.10.0" }
+    rustc_codegen_spirv   = { path = "./crates/rustc_codegen_spirv",   version = "=0.10.0", default-features = false }
+    rustc_codegen_spirv-types = { path = "./crates/rustc_codegen_spirv-types", version = "=0.10.0" }
+    ```
+
+    All crates are built and published together. Mixing versions between crates in the same release is not supported.
+  </Step>
+
+  <Step title="Update spirv-builder/README.md">
+    Add the new version to the compatibility table in `crates/spirv-builder/README.md`. Make sure the correct Rust nightly toolchain version is listed next to the new release so that users know which nightly to pin.
+  </Step>
+
+  <Step title="Open a PR, get a review, and merge">
+    Create a pull request containing only the version bump and README update. Wait for CI to pass and for a review from the team, then merge the PR.
+  </Step>
+
+  <Step title="Pull the merged main branch">
+    ```bash
+    git checkout main
+    git pull
+    ```
+  </Step>
+
+  <Step title="Tag the release commit">
+    Create a Git tag matching the new version:
+
+    ```bash
+    git tag v0.10.0
+    ```
+  </Step>
+
+  <Step title="Push the tag">
+    ```bash
+    git push origin v0.10.0
+    ```
+  </Step>
+
+  <Step title="Publish the crates in order">
+    Publish each crate in the order listed above. Navigate into each crate's directory and run `cargo publish`:
+
+    ```bash
+    cd crates/spirv-std/shared && cargo publish
+    cd ../macros              && cargo publish
+    cd ..                    && cargo publish
+    cd ../rustc_codegen_spirv-types && cargo publish
+    cd ../rustc_codegen_spirv       && cargo publish
+    cd ../spirv-builder             && cargo publish
+    ```
+
+    The crates.io index can take a few seconds to update after each publish. If a subsequent `cargo publish` fails because it cannot yet resolve the just-published dependency, wait a moment and try again.
+  </Step>
+</Steps>

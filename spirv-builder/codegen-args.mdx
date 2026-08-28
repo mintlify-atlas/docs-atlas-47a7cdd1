@@ -1,0 +1,278 @@
+---
+title: "Codegen Args: Debugging and Diagnostic Flags"
+sidebarTitle: "Codegen Args"
+description: "Internal codegen flags for rust-gpu via RUSTGPU_CODEGEN_ARGS: dump IR passes, disable validation, control SPIR-T, and diagnose shader compilation issues."
+---
+
+Codegen args are internal debugging and diagnostic flags passed directly to the `rustc_codegen_spirv` compiler backend. They are intended primarily for Rust-GPU developers and advanced users diagnosing shader compilation problems — not for production use. These flags can dump intermediate IR representations, disable validation and optimization passes, enable experimental SPIR-T passes, and print detailed diagnostic information about specialization and zombie removal.
+
+Set them via the `RUSTGPU_CODEGEN_ARGS` environment variable, or programmatically via `SpirvBuilder::extra_arg()` in your `build.rs`. To see the complete, up-to-date list of all available flags (including ones not covered in this document), run any build with:
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--help" cargo build
+```
+
+<Note>
+  These flags were historically individual environment variables (e.g. `DUMP_PRE_LINK`). They were consolidated into a single `RUSTGPU_CODEGEN_ARGS` interface in [PR #959](https://github.com/EmbarkStudios/rust-gpu/pull/959) to better align with `rustc`'s existing `-C llvm-args="..."` mechanism and to ensure proper Cargo dependency tracking. The old environment variables no longer work.
+</Note>
+
+---
+
+## How to Set Codegen Args
+
+### Via environment variable
+
+The most convenient approach for one-off debugging sessions is to set `RUSTGPU_CODEGEN_ARGS` directly in the shell:
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--no-spirv-val --dump-post-link=$PWD/postlink" cargo build
+```
+
+You can combine multiple flags in a single space-separated string. Use full absolute paths for any flags that accept directories or file paths, since the compiler's working directory may not be what you expect.
+
+### Via `SpirvBuilder::extra_arg()`
+
+For flags you always want applied, pass them programmatically in `build.rs`:
+
+```rust
+use spirv_builder::{MetadataPrintout, SpirvBuilder};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    SpirvBuilder::new("path/to/shader", "spirv-unknown-vulkan1.1")
+        .print_metadata(MetadataPrintout::Full)
+        .extra_arg("--dump-post-link=/tmp/spv-out")
+        .extra_arg("--no-spirv-opt")
+        .build()?;
+    Ok(())
+}
+```
+
+<Note>
+  `RUSTGPU_CODEGEN_ARGS` takes **precedence** over `extra_arg()`. If the environment variable is set, all `extra_arg` values are silently ignored. This makes it easy to temporarily override build script settings from the command line without modifying code.
+</Note>
+
+### Getting a full flag listing
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--help" cargo build -p your-app 2>&1 | head -60
+```
+
+This will print a usage message listing every flag the backend currently supports, including experimental ones not covered here.
+
+---
+
+## Flag Reference
+
+<Accordion title="Dump & Diagnostic Flags">
+
+These flags write intermediate compiler state to files on disk, letting you inspect the IR at different stages of the pipeline to isolate where a problem is introduced.
+
+It is recommended to use **absolute paths** for all directory and file arguments, as the compiler's working directory may be unexpected.
+
+### `--dump-mir DIR`
+
+Dumps the MIR (Mid-level Intermediate Representation) of every function that rust-gpu encounters to individual files inside `DIR`. Useful for understanding what Rust code the backend is seeing before it is lowered to SPIR-V.
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--dump-mir=$PWD/mir-dump" cargo build
+```
+
+### `--dump-module-on-panic FILE`
+
+If the **codegen** phase panics (i.e. crashes internally), writes the partially-emitted SPIR-V module to `FILE`. This can help recover enough information to file a useful bug report.
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--dump-module-on-panic=$PWD/panic-dump.spv" cargo build
+```
+
+Note: this only covers codegen panics. If the **linker** panics instead, this option has no effect.
+
+### `--dump-pre-link DIR`
+
+Dumps all input SPIR-V modules to the linker, to files in `DIR`, before any linking has occurred. Useful for inspecting what the codegen phase produced before the linker merges and transforms the modules.
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--dump-pre-link=$PWD/pre-link" cargo build
+```
+
+### `--dump-post-merge DIR`
+
+Dumps the merged SPIR-V module to a file in `DIR`, immediately after all input modules are merged together but before any linking work (such as resolving `LinkageAttributes`) has been done. Produces a single file rather than multiple, making it easier to `grep` through.
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--dump-post-merge=$PWD/post-merge" cargo build
+```
+
+### `--dump-post-split DIR`
+
+Dumps modules to files in `DIR` immediately after multimodule splitting, but before final cleanup passes (e.g. DCE to remove non-entry-point functions from each split module).
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--dump-post-split=$PWD/post-split" cargo build
+```
+
+### `--dump-post-link DIR`
+
+Dumps the final output SPIR-V modules from the linker, to files in `DIR`, **before** `spirv-opt` is applied. This is the most commonly useful dump flag: if your shader works with `--no-spirv-opt` but fails after optimization, comparing this output against the final `.spv` will show what `spirv-opt` changed.
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--dump-post-link=$PWD/post-link" cargo build
+```
+
+</Accordion>
+
+<Accordion title="Validation & Optimization Flags">
+
+These flags disable specific validation or optimization passes. They are useful for isolating whether a bug lives in Rust-GPU, in `spirv-opt`, or in downstream tooling — but most will produce invalid SPIR-V as a side effect.
+
+<Warning>
+  The flags `--no-spirv-val`, `--no-dce`, `--no-structurize`, and `--no-compact-ids` can produce **invalid SPIR-V modules** that will be rejected by Vulkan drivers and other SPIR-V consumers. Use them only for debugging and never in production builds.
+</Warning>
+
+### `--no-spirv-val`
+
+Disables running `spirv-val` (the SPIR-V validator) on the final output. Without validation, invalid modules will silently pass through the build. Only use this to confirm whether a validation error is a false positive or to test raw output from the linker.
+
+### `--no-spirv-opt`
+
+Forcibly disables running `spirv-opt` on the final output, even when the shader crate is compiled in release mode with optimizations enabled. Useful for checking whether a problem is introduced by `spirv-opt` rather than by the Rust-GPU backend itself.
+
+### `--no-dce`
+
+Disables the dead code elimination pass. This will almost certainly produce invalid SPIR-V (unreferenced functions and variables violate the spec) and may crash the linker. Only useful for very specific internal debugging scenarios.
+
+### `--no-compact-ids`
+
+Disables SPIR-V ID compaction at the end of linking. SPIR-V IDs will be spread across a very large range, making the binary extremely verbose. Useful when `println`-debugging with specific ID numbers in the linker, though note that `spirv-opt` will compact them again if it runs afterward.
+
+### `--no-structurize`
+
+Disables CFG (Control Flow Graph) structurization. The SPIR-V spec requires all control flow to be structured; disabling this pass will almost certainly produce invalid modules. Useful only for testing the structurizer itself.
+
+</Accordion>
+
+<Accordion title="SPIR-T Passes">
+
+SPIR-🇹 is the shader IR framework used by rust-gpu's linker. As of rust-gpu 0.8.0, SPIR-T is always enabled and cannot be disabled.
+
+<Note>
+  Prior to rust-gpu 0.6.0, SPIR-T had to be explicitly enabled with `--spirt`. Between 0.6.0 and 0.7.0, it was on by default but could be disabled with `--no-spirt`. As of **0.8.0**, SPIR-T is always active and both `--spirt` and `--no-spirt` are no longer recognized.
+</Note>
+
+### `--spirt-passes PASSES`
+
+Enable additional SPIR-T passes, specified as a comma-separated list of pass names. Pass implementations live in [`rustc_codegen_spirv::linker::spirt_passes`](https://github.com/EmbarkStudios/rust-gpu/tree/main/crates/rustc_codegen_spirv/src/linker/spirt_passes).
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--spirt-passes=qptr" cargo build
+```
+
+Passes not already enabled by default are considered **experimental** and likely not ready for production use. This flag exists primarily for testing new SPIR-T functionality.
+
+### `--dump-spirt-passes DIR`
+
+Dumps the SPIR-T module state before and after each pass to a pair of files in `DIR`: a `.spirt` plain-text file and a `.spirt.html` report.
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--dump-spirt-passes=$PWD/spirt-dump" cargo build
+```
+
+The `.spirt.html` version is the recommended format for human review — it uses a tabular layout to show the module at each pass stage, with syntax highlighting and use→def hyperlinks.
+
+### `--spirt-strip-custom-debuginfo-from-dumps`
+
+When generating pretty-printed SPIR-T dumps (e.g. via `--dump-spirt-passes`), strip all custom Rust-GPU-specific debuginfo instructions by converting them to standard SPIR-V debuginfo that SPIR-T understands natively.
+
+The default (keeping custom instructions) is more verbose but lossless. Use this flag when you want a cleaner dump that is easier to read at the cost of some detail.
+
+### `--spirt-keep-debug-sources-in-dumps`
+
+When generating SPIR-T dumps, preserve all "file contents debuginfo" (from SPIR-V `OpSource` instructions), including full source file contents embedded in the dump.
+
+By default, file contents are hidden to keep dump output concise. Use this flag when you need to correlate SPIR-T output with the original Rust source lines.
+
+</Accordion>
+
+<Accordion title="Specializer Debug Flags">
+
+The specializer resolves generic shader functions into concrete monomorphized instances. These flags expose its internal state for debugging generics-related compilation issues.
+
+### `--specializer-debug`
+
+Enables verbose debug logging for the specializer. Prints information about how generic functions are resolved and instantiated.
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--specializer-debug" cargo build
+```
+
+### `--specializer-dump-instances FILE`
+
+Dumps all instances inferred by the specializer to `FILE`. Useful for understanding exactly which monomorphizations the backend created from your generic shader code.
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--specializer-dump-instances=$PWD/specializer-instances.txt" cargo build
+```
+
+</Accordion>
+
+<Accordion title="Zombie Printing Flags">
+
+"Zombies" are functions or values that are marked as invalid (e.g. because they call an unsupported Rust feature) but are kept in the module temporarily until the linker can determine whether they are reachable from any live entry point. Unreachable zombies are silently removed; reachable zombies become hard errors.
+
+### `--print-zombie`
+
+Prints a summary to stdout of which functions were removed because they were zombies, and the reason each was marked as invalid. Helps diagnose why certain code paths are rejected.
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--print-zombie" cargo build
+```
+
+### `--print-all-zombie`
+
+Prints a complete, verbose log of everything removed due to zombie propagation — including all transitively infected callees, the original zombie reason, and whether each entry was a direct zombie or an indirect infection. This can produce a large amount of output.
+
+```bash
+RUSTGPU_CODEGEN_ARGS="--print-all-zombie" cargo build 2>&1 | less
+```
+
+</Accordion>
+
+<Accordion title="Inference & Legalization Flags">
+
+These flags control optional passes related to storage class inference and zombie reporting order. They are primarily useful when testing alternative legalization strategies.
+
+### `--no-infer-storage-classes`
+
+Disables the old SPIR-V Storage Class (address space) inference pass. By default, rust-gpu infers storage classes for pointer types automatically. Disabling this will produce illegal SPIR-V unless an alternative pass (such as `--spirt-passes=qptr`) is also enabled to re-assign storage classes.
+
+### `--no-early-report-zombies`
+
+Delays the zombie error reporting phase further into the pipeline, allowing additional legalization passes to run first. Currently, this also switches zombie reporting to a SPIR-T-based reporting mechanism, which may provide better diagnostics. This behaviour may become the default in a future release.
+
+</Accordion>
+
+---
+
+## Quick Reference
+
+| Flag | Safe to ship? | Effect |
+|---|---|---|
+| `--dump-mir DIR` | ✅ | Dumps Rust MIR to files |
+| `--dump-module-on-panic FILE` | ✅ | Saves partial module on panic |
+| `--dump-pre-link DIR` | ✅ | Dumps modules before linking |
+| `--dump-post-merge DIR` | ✅ | Dumps merged module |
+| `--dump-post-split DIR` | ✅ | Dumps modules after splitting |
+| `--dump-post-link DIR` | ✅ | Dumps final modules before spirv-opt |
+| `--no-spirv-val` | ❌ | Skips validation — may produce invalid SPIR-V |
+| `--no-spirv-opt` | ⚠️ | Disables optimization — valid but unoptimized |
+| `--no-dce` | ❌ | Disables DCE — likely produces invalid SPIR-V |
+| `--no-compact-ids` | ❌ | Huge IDs — not spec-compliant for distribution |
+| `--no-structurize` | ❌ | Likely produces invalid SPIR-V |
+| `--spirt-passes PASSES` | ⚠️ | Experimental passes only |
+| `--dump-spirt-passes DIR` | ✅ | SPIR-T HTML report |
+| `--specializer-debug` | ✅ | Verbose specializer logging |
+| `--specializer-dump-instances FILE` | ✅ | Dumps specializer instances |
+| `--print-zombie` | ✅ | Prints removed zombies |
+| `--print-all-zombie` | ✅ | Verbose zombie log |
+| `--no-infer-storage-classes` | ❌ | Illegal SPIR-V without qptr pass |
+| `--no-early-report-zombies` | ⚠️ | Changes error reporting timing |

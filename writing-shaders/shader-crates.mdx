@@ -1,0 +1,182 @@
+---
+title: "Writing Shader Crates with Rust-GPU"
+sidebarTitle: "Shader Crates"
+description: "Configure a Rust crate as a GPU shader, declare entry points with #[spirv(...)], add spirv-std, and integrate with spirv-builder for automatic compilation."
+---
+
+Rust-GPU compiles ordinary Rust crates into SPIR-V shader modules, but shader crates have a few special requirements compared to normal Rust libraries: they must be `no_std`, declare a `dylib` crate type so the linker produces a `.spv` binary, and annotate shader entry points with `#[spirv(...)]` attributes from `spirv-std`. This page walks through every step, from the initial `Cargo.toml` to loading the compiled SPIR-V binary in your host application.
+
+## Crate Configuration
+
+Configure your shader crate as a `dylib` in its `Cargo.toml` and add `spirv-std` as a dependency. All dependent crates are published on [crates.io](https://crates.io).
+
+```toml
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+spirv-std = { version = "0.9" }
+```
+
+<Note>
+  Shader crates must use `#![no_std]` because the Rust standard library is not
+  available in GPU shader execution environments. This restriction applies only
+  to the shader crate itself — your host application (the CPU-side code that
+  loads and runs the shader) continues to use the full standard library as
+  normal.
+</Note>
+
+## Entry Point Declaration
+
+Import the `spirv` attribute macro from `spirv-std` and annotate your entry-point functions with `#[spirv(...)]`. The following example defines a vertex shader and a fragment shader in the same crate:
+
+```rust
+#![no_std]
+
+use spirv_std::spirv;
+use spirv_std::glam::{vec4, Vec4};
+
+/// Vertex shader: passes a full-screen triangle through unchanged.
+#[spirv(vertex)]
+pub fn main_vs(
+    #[spirv(vertex_index)] vert_idx: i32,
+    #[spirv(position)] builtin_pos: &mut Vec4,
+) {
+    let uv = vec4(
+        ((vert_idx << 1) & 2) as f32,
+        (vert_idx & 2) as f32,
+        0.0,
+        0.0,
+    );
+    let pos = 2.0 * uv - Vec4::ONE;
+    *builtin_pos = pos;
+}
+
+/// Fragment shader: outputs solid red.
+#[spirv(fragment)]
+pub fn main_fs(output: &mut Vec4) {
+    *output = vec4(1.0, 0.0, 0.0, 1.0);
+}
+```
+
+Only functions annotated with an entry-point attribute are exported from the shader module — all other functions are treated as internal helpers.
+
+## Using glam
+
+Rust-GPU re-exports the [`glam`](https://docs.rs/glam) math library through `spirv_std::glam`. Use it for vectors, matrices, and quaternions inside shaders.
+
+<Tip>
+  Import `Vec2`, `Vec3`, `Vec4`, `UVec3`, and their constructor functions directly from
+  `spirv_std::glam`. The `glam` types are designed to map cleanly onto SPIR-V
+  vector types, so they are the recommended choice for shader math.
+</Tip>
+
+```rust
+#![no_std]
+
+use spirv_std::spirv;
+use spirv_std::glam::{vec2, vec3, Vec2, Vec3, Vec4};
+
+#[spirv(fragment)]
+pub fn main_fs(
+    #[spirv(frag_coord)] frag_coord: Vec4,
+    output: &mut Vec4,
+) {
+    // Use glam constructors and methods directly in shader code.
+    let uv: Vec2 = vec2(frag_coord.x, frag_coord.y) / vec2(1920.0, 1080.0);
+    let color: Vec3 = vec3(uv.x, uv.y, 0.5);
+    *output = color.extend(1.0);
+}
+```
+
+## Online Tools
+
+You can prototype and test Rust-GPU shaders entirely in the browser before setting up a local project:
+
+<CardGroup cols={2}>
+  <Card title="SHADERed" href="https://shadered.org/template">
+    A full shader IDE with a lite web version. Build and run Rust-GPU shaders
+    without any local installation.
+  </Card>
+  <Card title="Shader Playground" href="http://shader-playground.timjones.io/9d744d5893beb6a8f129fda50ad4aeeb">
+    An online tool similar to Compiler Explorer or the Rust Playground.
+    Inspect the SPIR-V output generated from your Rust shader code.
+  </Card>
+</CardGroup>
+
+## The rust-toolchain.toml Requirement
+
+Rust-GPU's compiler backend (`rustc_codegen_spirv`) is tightly coupled to a specific nightly toolchain. The build will fail with a clear error message if the version does not match exactly.
+
+<Steps>
+  <Step title="Copy rust-toolchain.toml">
+    Copy the [`rust-toolchain.toml`](https://github.com/EmbarkStudios/rust-gpu/blob/main/rust-toolchain.toml) file from the `rust-gpu` repository into the **root** of your workspace. Cargo reads this file automatically and switches to the required toolchain.
+
+    ```toml
+    [toolchain]
+    channel = "nightly-2023-09-30"
+    components = ["rust-src", "rustc-dev", "llvm-tools"]
+    ```
+  </Step>
+  <Step title="Verify the toolchain is installed">
+    Run the following command to confirm `rustup` has downloaded the correct toolchain:
+
+    ```bash
+    rustup toolchain list
+    ```
+
+    You should see `nightly-2023-09-30` (or the date in your `rust-toolchain.toml`) in the list.
+  </Step>
+</Steps>
+
+## Integrating with spirv-builder
+
+For larger projects, use `spirv-builder` in a build script to automatically compile shader crates and embed the resulting SPIR-V into your host binary.
+
+<Steps>
+  <Step title="Add spirv-builder to build-dependencies">
+    In your host application's `Cargo.toml`:
+
+    ```toml
+    [build-dependencies]
+    spirv-builder = "0.9"
+    ```
+  </Step>
+  <Step title="Write build.rs">
+    Create `build.rs` in the root of your host crate:
+
+    ```rust
+    use spirv_builder::{MetadataPrintout, SpirvBuilder};
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        SpirvBuilder::new("path/to/shader_crate", "spirv-unknown-vulkan1.1")
+            .print_metadata(MetadataPrintout::Full)
+            .build()?;
+        Ok(())
+    }
+    ```
+
+    Substitute the first argument with a path relative to `build.rs` pointing at your shader crate, and choose the appropriate [platform target](../platform-support). For Vulkan 1.1 use `"spirv-unknown-vulkan1.1"`.
+  </Step>
+  <Step title="Include the SPIR-V binary in your application">
+    The build script writes an environment variable containing the path to the compiled `.spv` file. Include it directly into your binary:
+
+    ```rust
+    const SHADER: &[u8] = include_bytes!(env!("shader_crate.spv"));
+    ```
+
+    If your shader crate name contains hyphens, replace them with underscores in the environment variable name.
+  </Step>
+  <Step title="Speed up debug builds (optional but recommended)">
+    By default, build dependencies compile in debug mode, making `rustc_codegen_spirv` very slow. Add this to your workspace `Cargo.toml` to build it in release mode:
+
+    ```toml
+    [profile.release.build-override]
+    opt-level = 3
+    codegen-units = 16
+
+    [profile.dev.build-override]
+    opt-level = 3
+    ```
+  </Step>
+</Steps>

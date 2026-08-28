@@ -1,0 +1,159 @@
+---
+title: "GPU Image Types in Rust-GPU Shaders"
+sidebarTitle: "Images"
+description: "Use the Image! macro and spirv_std::image types to declare sampled images, storage images, and samplers in Rust-GPU shaders."
+---
+
+SPIR-V has a rich and highly parameterized image type system. Every image in a SPIR-V module carries information about its dimensionality, sample type, whether it is sampled through a sampler or accessed directly as a storage image, whether it is arrayed, and more. `spirv-std` represents this system in Rust through the generic `Image<...>` struct, but specifying all of its type parameters by hand would be extremely verbose. In practice you should use either the `Image!` macro for custom image types or the predefined type aliases for common formats.
+
+## The Image! Macro
+
+The `Image!` macro provides a concise syntax for describing image types. Import it from `spirv_std`:
+
+```rust
+use spirv_std::Image;
+```
+
+The macro accepts keyword arguments that map to SPIR-V image type properties:
+
+| Argument | Values | Description |
+|---|---|---|
+| Dimension | `1D`, `2D`, `3D`, `cube` | Texture dimensionality |
+| `type=` | `f32`, `u32`, `i32` | Sampled element type |
+| `sampled` / `sampled=false` | boolean flag | Whether the image is used with a sampler (`true`) or accessed directly (`false`) |
+| `arrayed` | optional flag | Whether the image is an array of layers |
+
+```rust
+use spirv_std::Image;
+
+// A typical 2D floating-point texture used with a sampler (equivalent to texture2D in GLSL)
+type Image2dSampled = Image!(2D, type=f32, sampled);
+
+// A 2D storage image written directly from a compute shader, no sampler required
+type StorageImage2d = Image!(2D, type=f32, sampled=false);
+
+// A 2D unsigned integer texture used with a sampler
+type Image2dU = Image!(2D, type=u32, sampled);
+
+// An array of 2D floating-point textures used with a sampler
+type Image2dArray = Image!(2D, type=f32, sampled, arrayed);
+
+// A cubemap sampled using a direction vector
+type Cubemap = Image!(cube, type=f32, sampled);
+```
+
+## Predefined Type Aliases
+
+The `spirv_std::image` module provides a full set of ready-made aliases for the most common image formats. Prefer these over writing the `Image!` macro yourself.
+
+<Tip>
+  `Image2d` is the most commonly needed type. It corresponds to `texture2D` in
+  GLSL and is the right choice for standard sampled textures in fragment shaders.
+</Tip>
+
+### Sampled Images (used with a `Sampler`)
+
+| Type | Equivalent `Image!` expression | Description |
+|---|---|---|
+| `Image1d` | `Image!(1D, type=f32, sampled)` | 1D float texture |
+| `Image2d` | `Image!(2D, type=f32, sampled)` | 2D float texture (most common) |
+| `Image3d` | `Image!(3D, type=f32, sampled)` | 3D float texture |
+| `Image1dU` | `Image!(1D, type=u32, sampled)` | 1D unsigned int texture |
+| `Image2dU` | `Image!(2D, type=u32, sampled)` | 2D unsigned int texture |
+| `Image3dU` | `Image!(3D, type=u32, sampled)` | 3D unsigned int texture |
+| `Image1dI` | `Image!(1D, type=i32, sampled)` | 1D signed int texture |
+| `Image2dI` | `Image!(2D, type=i32, sampled)` | 2D signed int texture |
+| `Image3dI` | `Image!(3D, type=i32, sampled)` | 3D signed int texture |
+| `Cubemap` | `Image!(cube, type=f32, sampled)` | Cubemap float texture |
+
+### Sampled Image Arrays
+
+| Type | Description |
+|---|---|
+| `Image1dArray` | Array of 1D float textures |
+| `Image2dArray` | Array of 2D float textures |
+| `Image3dArray` | Array of 3D float textures |
+| `Image1dUArray` | Array of 1D unsigned int textures |
+| `Image2dUArray` | Array of 2D unsigned int textures |
+| `Image3dUArray` | Array of 3D unsigned int textures |
+| `Image1dIArray` | Array of 1D signed int textures |
+| `Image2dIArray` | Array of 2D signed int textures |
+| `Image3dIArray` | Array of 3D signed int textures |
+
+### Storage Images (direct access, no `Sampler`)
+
+| Type | Description |
+|---|---|
+| `StorageImage1d` | 1D float storage image |
+| `StorageImage2d` | 2D float storage image |
+| `StorageImage3d` | 3D float storage image |
+| `StorageImage1dU` | 1D unsigned int storage image |
+| `StorageImage2dU` | 2D unsigned int storage image |
+| `StorageImage3dU` | 3D unsigned int storage image |
+| `StorageImage1dI` | 1D signed int storage image |
+| `StorageImage2dI` | 2D signed int storage image |
+| `StorageImage3dI` | 3D signed int storage image |
+
+Import aliases from the `spirv_std::image` module:
+
+```rust
+use spirv_std::image::{Image2d, StorageImage2d, Image2dArray};
+```
+
+## Sampler
+
+A `Sampler` is an opaque object that defines how an image is filtered and addressed when it is sampled. It is a separate binding from the image itself and is used together with a sampled image (`sampled=true`) in fragment and vertex shaders.
+
+```rust
+use spirv_std::Sampler;
+```
+
+`Sampler` does not have generic parameters — it is a plain opaque type that is bound as a descriptor just like an image.
+
+## Using Images in Entry Points
+
+Bind images and samplers as descriptor-set resources using `#[spirv(descriptor_set = N, binding = N)]`. The following example shows a typical fragment shader that samples a 2D texture:
+
+```rust
+#![no_std]
+
+use spirv_std::spirv;
+use spirv_std::glam::{Vec2, Vec4};
+use spirv_std::image::Image2d;
+use spirv_std::Sampler;
+
+#[spirv(fragment)]
+pub fn main_fs(
+    uv: Vec2,
+    #[spirv(descriptor_set = 1, binding = 0)] texture: &Image2d,
+    #[spirv(descriptor_set = 1, binding = 1)] sampler: &Sampler,
+    output: &mut Vec4,
+) {
+    *output = texture.sample(*sampler, uv);
+}
+```
+
+The `uv` parameter is an interpolated value passed in from the vertex shader via the pipeline's varying interface.
+
+## Storage Images
+
+Storage images allow compute and fragment shaders to read from and write to image resources directly, without going through a sampler. They are useful for image processing, post-effects, and general-purpose compute workloads.
+
+Declare a storage image with `sampled=false` (or use a `StorageImage*` alias) and bind it with the appropriate descriptor attributes:
+
+```rust
+#![no_std]
+
+use spirv_std::spirv;
+use spirv_std::glam::UVec3;
+use spirv_std::image::StorageImage2d;
+
+#[spirv(compute(threads(8, 8)))]
+pub fn clear_image(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(descriptor_set = 1, binding = 0)] image: &StorageImage2d,
+) {
+    // Directly write to pixels without a sampler.
+    // See the spirv_std docs for the write() method signature.
+}
+```

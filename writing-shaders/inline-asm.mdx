@@ -1,0 +1,145 @@
+---
+title: "Inline SPIR-V Assembly in Rust-GPU Shaders"
+sidebarTitle: "Inline Assembly"
+description: "Write raw SPIR-V instructions inside Rust shaders using the asm! macro. Covers ID syntax, type inference, and practical examples."
+---
+
+Rust-GPU supports writing raw SPIR-V instructions directly inside shader code using Rust's `asm!` macro. This gives you access to the full breadth of the SPIR-V instruction set — including instructions that are not yet wrapped by higher-level `spirv-std` APIs. The inline assembly feature is nightly-only and requires enabling the `asm_experimental_arch` feature in your shader crate.
+
+<Note>
+  The `asm_experimental_arch` feature must be enabled in your shader crate's
+  `lib.rs` or `main.rs` to use inline SPIR-V assembly:
+
+  ```rust
+  #![cfg_attr(target_arch = "spirv", feature(asm_experimental_arch))]
+  ```
+
+  This feature is already enabled by `spirv-std` itself, so if your crate
+  depends on `spirv-std` you may not need to add it explicitly.
+</Note>
+
+<Warning>
+  Inline assembly is `unsafe` and bypasses Rust's safety guarantees entirely.
+  Incorrect SPIR-V can produce undefined behavior on the GPU, fail validation,
+  or silently produce wrong results. Prefer the higher-level APIs in
+  `spirv_std::arch` and `spirv_std::image` whenever they cover your use case.
+</Warning>
+
+## Basic Syntax
+
+Use the `asm!` macro with string literals containing SPIR-V instruction names and operands. For more background on the macro syntax, refer to the [Rust Unstable Book](https://doc.rust-lang.org/unstable-book/library-features/asm.html).
+
+**Non-ID instructions** are written exactly as they appear in the SPIR-V spec:
+
+```rust
+unsafe {
+    core::arch::asm!("OpCapability DerivativeControl");
+}
+```
+
+**ID-based instructions** use `%<name>` to refer to abstract SSA IDs, and `=` on the left-hand side to capture a result ID:
+
+```rust
+use spirv_std::glam::Vec2;
+
+let vector = Vec2::new(1.0, 0.0);
+let index: usize = 0;
+let mut result = f32::default();
+
+unsafe {
+    core::arch::asm!(
+        "%vector = OpLoad _ {vector}",
+        "%element = OpVectorExtractDynamic _ %vector {index}",
+        "OpStore {element} %element",
+        vector = in(reg) &vector,
+        index  = in(reg) index,
+        element = in(reg) &mut result,
+    );
+}
+```
+
+## Syntax Reference
+
+| Syntax | Description |
+|---|---|
+| `%<name>` | Refers to an abstract SPIR-V SSA ID. Every unique `<name>` within an `asm!` block allocates a new ID. |
+| `typeof{<variable>}` | Produces the SPIR-V type of `<variable>`. Used wherever a type ID is required. |
+| `_` (underscore) | Equivalent to `typeof{<variable>}`, but the variable is inferred from context. |
+| `{variable}` | A Rust variable bound via an `in(reg)` / `out(reg)` operand. Produces the ID of that value. |
+| `= OpXxx ...` | The instruction on the right-hand side produces a result ID bound to the name on the left. |
+
+## Accepted Input Types
+
+The `asm!` operands (`in(reg)`, `out(reg)`, `inout(reg)`) accept the following Rust types:
+
+- **Integers** (`u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`)
+- **Floats** (`f32`, `f64`)
+- **SIMD vectors** (`Vec2`, `Vec3`, `Vec4`, and their integer variants from `glam`)
+- **Pointers** (`*const T`, `*mut T`, `&T`, `&mut T`)
+- **Function pointers**
+
+Although generic types are not directly accepted, you can pass a **pointer to a generic value** to write assembly that works across types. This is the standard pattern for implementing generic SPIR-V intrinsics.
+
+## Practical Example
+
+The following function is a generic implementation of `OpVectorExtractDynamic` that works for any scalar type `T` and any vector type `V`. This exact function is also available as `spirv_std::arch::vector_extract_dynamic`.
+
+```rust
+use spirv_std::scalar::Scalar;
+use spirv_std::vector::Vector;
+
+/// Dynamically extract a scalar component from a vector at a runtime index.
+///
+/// # Safety
+/// The `index` must be within bounds for the vector type `V`.
+pub unsafe fn vector_extract_dynamic<T: Scalar, V: Vector<T>>(
+    vector: V,
+    index: usize,
+) -> T {
+    let mut result = T::default();
+
+    core::arch::asm!(
+        "%vector  = OpLoad _ {vector}",
+        "%element = OpVectorExtractDynamic _ %vector {index}",
+        "OpStore {element} %element",
+        vector  = in(reg) &vector,
+        index   = in(reg) index,
+        element = in(reg) &mut result,
+    );
+
+    result
+}
+```
+
+The key pattern here is:
+1. Load the generic value through a pointer (`OpLoad _ {vector}`).
+2. Operate on the SPIR-V ID (`%element = OpVectorExtractDynamic ...`).
+3. Store the result back through a pointer (`OpStore {element} %element`).
+
+This pointer-in / pointer-out pattern works for any type that Rust-GPU can represent as a SPIR-V value.
+
+## When to Use Inline Assembly
+
+<Accordion title="Good use cases for inline assembly">
+  - Accessing SPIR-V instructions that are not yet exposed through `spirv-std` APIs.
+  - Low-level control over exact instruction sequences for performance-critical code paths.
+  - Prototyping new `spirv-std` intrinsics before they are upstreamed.
+  - Directly emitting SPIR-V capability declarations (`OpCapability`) or extension instructions.
+</Accordion>
+
+<Accordion title="When to prefer spirv_std::arch instead">
+  The `spirv_std::arch` module provides safe Rust wrappers around many SPIR-V
+  instructions, including:
+
+  - `vector_extract_dynamic` / `vector_insert_dynamic`
+  - `read_clock_khr`
+  - Ray tracing helpers (`report_intersection`, `ignore_intersection`, `terminate_ray`, `execute_callable`)
+  - Subgroup operations
+  - Atomic operations
+
+  Check `spirv_std::arch` before writing inline assembly. If an appropriate
+  wrapper exists, prefer it — the wrapper is safer, easier to read, and protects
+  you from subtle SPIR-V encoding mistakes.
+</Accordion>
+
+For more information on specific instruction behaviour and operand semantics, refer to the [SPIR-V specification](https://www.khronos.org/registry/spir-v/specs/unified1/SPIRV.html).
